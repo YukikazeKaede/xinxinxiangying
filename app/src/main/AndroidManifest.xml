@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="cn.xinxinxiangying.app" android:versionCode="14" android:versionName="0.6.8">
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application android:label="@string/app_name" android:icon="@drawable/ic_launcher" android:allowBackup="false" android:debuggable="false" android:usesCleartextTraffic="false" android:supportsRtl="true" android:theme="@style/AppTheme">
+        <provider android:name=".TimetableShare" android:authorities="cn.xinxinxiangying.app.share" android:exported="false" android:grantUriPermissions="true" />
+        <provider android:name=".UpdateFileProvider" android:authorities="cn.xinxinxiangying.app.updates" android:exported="false" android:grantUriPermissions="true" />
+        <receiver android:name=".TimetableWidget" android:exported="false"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/timetable_widget_info" /></receiver>
+        <receiver android:name=".CourseReminder" android:exported="false"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED" /><action android:name="android.intent.action.TIME_SET" /><action android:name="android.intent.action.TIMEZONE_CHANGED" /></intent-filter></receiver>
+        <activity android:name=".SchoolLoginActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".SchoolWebActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".AcademicActivity" android:exported="false" />
+        <activity android:name=".TimetableActivity" android:exported="false" />
+        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

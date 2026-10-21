@@ -1,0 +1,4 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="18dp" android:background="@drawable/widget_surface">
+    <TextView android:id="@+id/widget_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="今日课表" android:textColor="#287765" android:textStyle="bold" android:textSize="16sp" />
+    <TextView android:id="@+id/widget_courses" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:textColor="#233D38" android:textSize="13sp" android:lineSpacingExtra="7dp" android:maxLines="7" android:ellipsize="end" />
+</LinearLayout>

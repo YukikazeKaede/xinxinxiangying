@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">心心相应</string>
+    <!-- HTTPS update manifest; leave empty to disable in-app update checks. Format: update.json.example. -->
+    <string name="update_manifest_url" translatable="false">https://github.com/YukikazeKaede/xinxinxiangying/releases/latest/download/update.json</string>
+</resources>

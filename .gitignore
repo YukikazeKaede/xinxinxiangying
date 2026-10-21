@@ -1,0 +1,55 @@
+# Local/private material: never commit
+_private/
+toolchain/
+build/
+dist/
+signing/
+analysis/
+archive/
+.workbuddy/
+__pycache__/
+*.pyc
+
+# Signing material
+*.p12
+*.jks
+*.keystore
+keystore.properties
+local.properties
+
+# Generated packages and release artifacts
+*.apk
+*.aab
+*.idsig
+update.json
+
+# Personal exports and local captures
+schedule.json
+week_*.md
+*.log
+*.hprof
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Credentials, local settings, and personal databases
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.mobileprovision
+*.db
+*.sqlite
+*.sqlite3
+*.har
+*.pcap
+*.pcapng
+*.bak
+*.dump
+.agents/
+.codex/

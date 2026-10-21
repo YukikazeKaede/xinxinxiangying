@@ -1,0 +1,8 @@
+{
+  "versionCode": 15,
+  "versionName": "0.6.9",
+  "url": "https://github.com/OWNER/REPO/releases/latest/download/xinxin_0.6.9.apk",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "size": 128330,
+  "notes": "1. 新增或修复的内容写在这里。\n2. 每行一条，弹窗会原样显示。"
+}

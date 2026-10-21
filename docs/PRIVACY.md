@@ -1,0 +1,44 @@
+# 隐私说明
+
+## 本机保存的数据
+
+| 数据 | 位置 | 说明 |
+| --- | --- | --- |
+| 课表、调课、学期设置 | 应用私有 SharedPreferences | 按学生类型与账号作用域隔离 |
+| 成绩、考试、GPA 快照 | 应用私有 SharedPreferences | 只保存最近一次同步结果 |
+| 学校账号 | 应用私有 SharedPreferences | 学号明文用于区分账号；密码默认不保存 |
+| 记住的密码 | Android Keystore 加密后存本机 | 仅用户主动勾选时；退出/清除可删除 |
+| WebView 登录 Cookie | 系统 WebView Cookie 存储 | 由学校会话有效期决定；退出时尝试清除 |
+| 更新下载文件 | 应用私有目录 | 校验 SHA-256 后交给系统安装器 |
+
+应用不包含统计 SDK、广告 SDK 或远程日志。除学校网站、学校接口和应用更新清单外，不主动发起网络请求。
+
+## 权限
+
+- `INTERNET`：访问学校网站与更新清单。
+- `POST_NOTIFICATIONS`：课前提醒。
+- `RECEIVE_BOOT_COMPLETED`：重启后恢复提醒。
+- `REQUEST_INSTALL_PACKAGES`：应用内更新时调用系统安装器；实际安装仍需用户授权“安装未知应用”。
+
+## 网络与更新
+
+- 更新清单必须是 HTTPS；下载完成后校验清单中的 SHA-256。
+- 清单与 APK 地址由使用者在 `strings.xml` 的 `update_manifest_url` 配置；仓库默认值指向项目自己的 GitHub Releases。
+- 应用不会上传设备信息、账号或成绩。
+
+## 删除数据
+
+- 应用内“退出登录”会清除本机账号授权、课表、成绩、考试与网页登录状态；具体以当前版本为准。
+- 卸载应用会删除应用私有目录；无法删除已经导出到公共目录的文件。
+
+## 开源仓库注意事项
+
+提交前请确认：
+
+- 不包含 `.p12`、`.jks`、`keystore.properties`、`local.properties`；
+- 不包含真实学号、姓名、成绩单、考试安排、Cookie、抓包日志；
+- 不包含 `toolchain/`、`build/`、`dist/` 和带个人信息的截图；
+- 测试使用合成账号与合成响应；
+- 发布 APK 使用独立签名密钥，并备份私钥。
+
+仓库中的 `_private/`、`analysis/`、`build/`、`dist/`、`toolchain/`、`signing/` 均被 `.gitignore` 排除；请勿用拖拽方式把这些目录上传到 GitHub 网页。
