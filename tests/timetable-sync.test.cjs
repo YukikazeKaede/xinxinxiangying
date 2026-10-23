@@ -143,6 +143,8 @@ test('walks every week with the observed request body and same-origin cookies', 
   assert.equal(state.termStart, '2026-09-14');
   assert.equal(state.termWeeks, 3);
   assert.equal(state.raw.data.kbList.length, 1, '逐周返回的同一条课程合并为一条');
+  assert.equal(state.raw.data.xsxx.XM, '测试学生', '姓名元数据随学校课表响应保留');
+  assert.equal(state.raw.data.xsxx.XH, '', '没有返回学号时不推测学号');
   assert.equal(state.raw.url, ENDPOINT);
 });
 

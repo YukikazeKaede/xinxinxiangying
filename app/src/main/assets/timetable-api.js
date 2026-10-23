@@ -123,11 +123,12 @@
   function finish() {
     if (!list.length) { state.status = 'empty'; state.reason = failed.length ? 'weeks-failed' : 'no-course'; return; }
     if (failed.length) state.failedWeeks = failed;
-    state.raw = {url: endpoint, data: {kbList: list}};
+    state.raw = {url: endpoint, data: {kbList: list, xsxx: state.student || {}}};
     state.termWeeks = state.weeks;
     state.status = 'complete';
   }
   probe(0, function (xnm, xqm, first) {
+    state.student = {XM: first.xsxx.XM, XH: first.xsxx.XH || ''};
     var label = labels(first);
     if (label) state.semester = label;
     var start = monday(first);
