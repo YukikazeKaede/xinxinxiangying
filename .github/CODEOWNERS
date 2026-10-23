@@ -1,0 +1,3 @@
+# 默认评审人：所有 PR 由维护者过一遍再合并。
+# 若仓库启用了「Require review from Code Owners」，这里会让登录、更新、构建相关改动必须由维护者批准。
+*  @YukikazeKaede

@@ -78,12 +78,17 @@ build.ps1                无 Gradle 构建脚本
 tools/                   更新清单与构建辅助脚本
 tests/                   解析器、模型、脚本与仪器测试（合成数据）
 docs/                    构建、隐私、更新与版本说明
+CONTRIBUTING.md          协作、评审与发版规范
 update.json.example      更新清单模板
 ```
 
 ## 测试
 
 `tests/` 中的 Java/CJS/仪器测试使用合成学校响应和合成账号，不包含真实学校凭据。运行方式取决于本机工具链；仓库不附带模拟器或学校页面快照。
+
+## 贡献
+
+分支、提交、PR、评审与发版规则见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。每次改动前把 [`docs/UPDATE_PROMPT.md`](docs/UPDATE_PROMPT.md) 里的提示词连同需求一起交给 DeepSeek，按它给出的交付报告提 PR，保持口径一致。
 
 ## 许可证
 
