@@ -10,7 +10,6 @@ import android.net.http.SslError;
 import android.os.Bundle;
 import android.view.View;
 import android.view.WindowInsets;
-import android.view.WindowManager;
 import android.webkit.*;
 import android.widget.*;
 import org.json.JSONTokener;
@@ -32,6 +31,7 @@ public final class SchoolWebActivity extends Activity {
     private String service;
     private boolean postgraduate;
     private boolean navigationFailed;
+    private boolean debuggable;
     private String timetableScript;
     private String timetableQueryScript;
     private String timetableApiScript;
@@ -49,13 +49,13 @@ public final class SchoolWebActivity extends Activity {
     private String academicXnm="";
     private String academicXqm="";
     private String lastAcademicState="";
-    private static void log(String message){ android.util.Log.i("xinxinsync",message); }
+    private void log(String message){ if(!debuggable) return; android.util.Log.i("xinxinsync",message); }
     private Button importButton;
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density*v+.5f); }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         CampusUi.window(this);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE,WindowManager.LayoutParams.FLAG_SECURE);
+        debuggable=(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0;
         service=getIntent().getStringExtra("service"); if(service==null) service="auth";
         postgraduate=getIntent().getBooleanExtra("postgraduate",false);
         autoSync=getIntent().getBooleanExtra("autoSync",false);
@@ -109,11 +109,11 @@ public final class SchoolWebActivity extends Activity {
         settings.setBuiltInZoomControls(true); settings.setDisplayZoomControls(false); settings.setLoadWithOverviewMode(true); settings.setUseWideViewPort(true);
         if(android.os.Build.VERSION.SDK_INT>=26) settings.setSafeBrowsingEnabled(true);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
-        WebView.setWebContentsDebuggingEnabled(true);
+        WebView.setWebContentsDebuggingEnabled(debuggable);
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onProgressChanged(WebView view,int value) { progress.setProgress(value); progress.setVisibility(value>=100?View.GONE:View.VISIBLE); }
             @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                log("console "+message.message()+" @"+message.sourceId()+":"+message.lineNumber());return true;
+                log("console "+message.sourceId()+":"+message.lineNumber());return true;
             }
         });
         web.setWebViewClient(new WebViewClient(){
@@ -427,7 +427,7 @@ public final class SchoolWebActivity extends Activity {
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(()->waitForAcademic(url,attempt+1,target),600);
                 return;
             }
-            if("complete".equals(state)){log("academic shape "+body);saveAcademic(body,target);return;}
+            if("complete".equals(state)){log("academic shape bytes="+body.length());saveAcademic(body,target);return;}
             String failure;
             if("login".equals(reason))failure="学校登录已失效";
             else if("no-term".equals(reason))failure="学校没有给出当前学年学期";

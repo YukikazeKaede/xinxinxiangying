@@ -13,7 +13,7 @@ import org.json.JSONObject;
 public final class SchoolLoginActivity extends Activity {
     private boolean pg;
     @Override public void onCreate(Bundle state){
-        super.onCreate(state);CampusUi.window(this);getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        super.onCreate(state);CampusUi.window(this);
         pg=getSharedPreferences("school_profile",0).getBoolean("postgraduate",false);SchoolAccount account=new SchoolAccount(this);
         JSONObject remembered=account.remembered(pg);
         if(AppSession.valid(this)&&remembered!=null&&!getIntent().getBooleanExtra("edit",false)){open(remembered.optString("username"),remembered.optString("password"),true,false);return;}
