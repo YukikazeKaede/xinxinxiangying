@@ -26,7 +26,7 @@ public final class MainActivity extends Activity {
     private int dp(float n){return CampusUi.dp(this,n);}
     private TextView text(String s,int size,int color){return CampusUi.text(this,s,size,color);}
     @Override public void onCreate(Bundle state){
-        super.onCreate(state);getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);CampusUi.window(this);
+        super.onCreate(state);CampusUi.window(this);
         if(!AppSession.require(this))return;
         prefs=getSharedPreferences("school_profile",MODE_PRIVATE);selectedTab=state!=null?state.getInt("tab",0):getIntent().getIntExtra("tab",0);
         if(state!=null)avatarOwner=state.getString("avatarOwner","");

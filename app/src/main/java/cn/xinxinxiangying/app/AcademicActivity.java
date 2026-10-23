@@ -8,7 +8,6 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
-import android.view.WindowManager;
 import android.widget.*;
 
 import org.json.JSONArray;
@@ -31,7 +30,6 @@ public final class AcademicActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         CampusUi.window(this);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         service=getIntent().getStringExtra("service");if(service==null)service="grades";
         postgraduate=getSharedPreferences("school_profile",0).getBoolean("postgraduate",false);
         repository=new AcademicRepository(this);
