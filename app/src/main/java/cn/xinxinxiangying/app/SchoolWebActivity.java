@@ -146,6 +146,7 @@ public final class SchoolWebActivity extends Activity {
                 if(url==null||!url.equals(view.getUrl()))return;
                 if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url)) status.setText("校方页面 · "+safeHost(url));
                 CookieManager.getInstance().flush();
+                if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
                     view.evaluateJavascript(timetableScript,null);
                 if(!autoSync&&!navigationFailed){view.evaluateJavascript("!!document.querySelector('input[type=password]')",value->{if("true".equals(value)&&!isFinishing())rejectLogin("学校登录已失效，请重新登录");});}
@@ -175,6 +176,27 @@ public final class SchoolWebActivity extends Activity {
     }
     private String readAsset(String name){try(java.io.InputStream in=getAssets().open(name)){java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}catch(Exception e){return "";}}
     private String assetOrNull(String name){String value=readAsset(name);return value.isEmpty()?null:value;}
+    private void simplifyElectricity(String url,int version){
+        Uri page=Uri.parse(url);
+        if(!"https".equals(page.getScheme())||!"ecard.sit.edu.cn".equals(page.getHost())||!"/epay/h5/payele".equals(page.getPath()))return;
+        String script=assetOrNull("electricity-prefill.js");
+        if(script!=null)web.evaluateJavascript(script,result->electricityProgress(version,0));
+    }
+    private void electricityProgress(int version,int attempt){
+        if(web==null||isFinishing()||version!=pageVersion)return;
+        web.evaluateJavascript("window.__xinxinElectricity&&window.__xinxinElectricity.status",result->{
+            if(web==null||isFinishing()||version!=pageVersion)return;
+            String state=unquote(result);
+            if("complete".equals(state))status.setText("奉贤校区 · 住宿区 · 请选择楼栋、楼层和房间");
+            else if("pending".equals(state)&&attempt<45)autoHandler.postDelayed(()->electricityProgress(version,attempt+1),500);
+            else status.setText("校区未能自动填写，请在原表单中选择");
+        });
+    }
+    private void saveProfileName(org.json.JSONObject parsed){
+        String owner=parsed.optString("studentOwner","");
+        if(!owner.isEmpty()&&owner.equals(new SchoolAccount(this).username(postgraduate))&&!parsed.optString("studentName","").isEmpty())
+            if(!new LocalProfile(this,postgraduate).saveName(parsed.optString("studentName")))Toast.makeText(this,"姓名暂未保存，可稍后重新同步",Toast.LENGTH_SHORT).show();
+    }
     private void revealSchool(){if(syncOverlay!=null)syncOverlay.setVisibility(View.GONE);}
     private void rejectLogin(String message){if(isFinishing())return;autoStopped=true;autoHandler.removeCallbacksAndMessages(null);pendingPassword="";if(web!=null)web.stopLoading();AppSession.login(this,message,academicService!=null?academicService:"timetable");}
     private void leaveSchool(){if(!AppSession.valid(this)){rejectLogin("登录尚未通过，请重新登录");return;}finish();}
@@ -268,7 +290,7 @@ public final class SchoolWebActivity extends Activity {
             parsed.put("startDate",start).put("totalWeeks",Math.max(maxWeek,Math.max(old.optInt("totalWeeks",20),parsed.optInt("termWeeks",0))));
             for(String key:new String[]{"patches","periodTimes","viewMode","palette","wallpaper","visibleDays","reminderMinutes","deletedCourseIds","smartWeekend","showStatus","cardAlpha"})if(old.has(key))parsed.put(key,old.get(key));
             org.json.JSONArray previous=old.optJSONArray("courses"),deleted=old.optJSONArray("deletedCourseIds");java.util.Set<String> removed=new java.util.HashSet<>();if(deleted!=null)for(int i=0;i<deleted.length();i++)removed.add(deleted.optString(i));java.util.LinkedHashMap<String,org.json.JSONObject> merged=new java.util.LinkedHashMap<>();for(int i=0;i<courses.length();i++){org.json.JSONObject c=courses.getJSONObject(i);if(!removed.contains(c.optString("id")))merged.put(c.optString("id"),c);}if(previous!=null)for(int i=0;i<previous.length();i++){org.json.JSONObject c=previous.getJSONObject(i);if("manual".equals(c.optString("origin")))merged.put(c.optString("id"),c);}org.json.JSONArray complete=new org.json.JSONArray();for(org.json.JSONObject c:merged.values()){complete.put(c);maxWeek=Math.max(maxWeek,c.optInt("endWeek",1));}parsed.put("courses",complete).put("totalWeeks",Math.max(maxWeek,parsed.optInt("totalWeeks",20)));
-            repository.save(parsed);org.json.JSONArray missing=parsed.optJSONArray("failedWeeks");
+            repository.save(parsed);saveProfileName(parsed);org.json.JSONArray missing=parsed.optJSONArray("failedWeeks");
             Toast.makeText(this,missing==null||missing.length()==0?"登录成功，课表已同步":"课表已同步（第"+missing.join("、")+"周未抓取，请稍后重试）",Toast.LENGTH_LONG).show();if(syncAll)startAcademicStage("grades");else enterApp();
         }catch(Exception e){offerManualImport(e.getMessage()==null?"课表保存失败":e.getMessage());}
     }
@@ -498,6 +520,15 @@ public final class SchoolWebActivity extends Activity {
                     String source=extraction.optString("sourceUrl","");
                     if(!SchoolCatalog.isAcademicUrl(source)) throw new IllegalArgumentException("课表必须来自学校教务系统");
                     org.json.JSONObject parsed=TimetableParser.parse(extraction);
+                    String owner=autoSync?pendingUsername:new SchoolAccount(this).username(postgraduate);
+                    org.json.JSONArray raw=extraction.optJSONArray("raw");
+                    if(raw!=null)for(int i=0;i<raw.length();i++){
+                        org.json.JSONObject carrier=raw.optJSONObject(i),data=carrier==null?null:carrier.optJSONObject("data"),student=data==null?null:data.optJSONObject("xsxx");
+                        if(student!=null&&student.opt("XM") instanceof String&&
+                            (student.optString("XH","").isEmpty()||owner.equals(student.optString("XH")))){
+                            parsed.put("studentName",student.getString("XM")).put("studentOwner",owner);break;
+                        }
+                    }
                     org.json.JSONArray rows=parsed.optJSONArray("courses");
                     log("parsed "+parsed.optString("semester")+" courses="+(rows==null?0:rows.length())+" weeks="+parsed.optInt("termWeeks",0));
                     parsed.put("sourceUrl",source).put("studentType",postgraduate?"pg":"ug").put("importedAt",System.currentTimeMillis());
@@ -553,7 +584,7 @@ public final class SchoolWebActivity extends Activity {
                 boolean sameSemester=semester.equals(old.optString("semester",""));
                 parsed.put("semester",semester).put("startDate",sameSemester?old.optString("startDate",""):"");
                 if(sameSemester)parsed.put("totalWeeks",Math.max(parsed.optInt("totalWeeks",20),old.optInt("totalWeeks",20)));
-                repository.save(parsed);dialog.dismiss();Toast.makeText(this,"课表已导入，可离线查看",Toast.LENGTH_LONG).show();
+                repository.save(parsed);saveProfileName(parsed);dialog.dismiss();Toast.makeText(this,"课表已导入，可离线查看",Toast.LENGTH_LONG).show();
                 startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));finish();
             } catch(RuntimeException|org.json.JSONException e) { showImportError(e.getMessage()==null?"本机保存失败":e.getMessage()); }
         }));dialog.show();
