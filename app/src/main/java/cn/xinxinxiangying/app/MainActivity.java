@@ -86,9 +86,9 @@ public final class MainActivity extends Activity {
         account.addView(row("saved","已保存的教务页面","",v->showSaved()));divider(account);
         account.addView(row("settings","设置","",v->timetable.showSettings()));divider(account);
         account.addView(row("refresh","检查更新","当前版本 "+UpdateChecker.versionName(this),v->UpdateChecker.check(this,true)));divider(account);
-        account.addView(row("more","关于与隐私","",v->new AlertDialog.Builder(this).setTitle("心心相应 0.6.8").setMessage("面向上海应用技术大学的独立校园工具。\n\n课表与教务页面文本保存在本机。密码仅用于学校认证；选择记住密码后由此设备的系统密钥加密保存。\n学校服务以官方门户为准。").setPositiveButton("知道了",null).show()));divider(account);
+        account.addView(row("more","关于与隐私","",v->new AlertDialog.Builder(this).setTitle("心心相应 "+UpdateChecker.versionName(this)).setMessage("面向上海应用技术大学的独立校园工具。\n\n课表与教务页面文本保存在本机。密码仅用于学校认证；选择记住密码后由此设备的系统密钥加密保存。\n学校服务以官方门户为准。").setPositiveButton("知道了",null).show()));divider(account);
         account.addView(row("back","退出登录","",v->confirmClear()));gap(40);
-        TextView footer=text("校园服务以学校官方信息为准\n心心相应  0.6.8",11,muted);footer.setGravity(Gravity.CENTER);footer.setLineSpacing(dp(5),1);content.addView(footer);
+        TextView footer=text("校园服务以学校官方信息为准\n心心相应  "+UpdateChecker.versionName(this),11,muted);footer.setGravity(Gravity.CENTER);footer.setLineSpacing(dp(5),1);content.addView(footer);
     }
     private boolean isPostgraduate() { return prefs.getBoolean("postgraduate",false); }
     private void openService(String id) {
