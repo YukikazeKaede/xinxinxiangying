@@ -7,6 +7,25 @@ import java.util.*;
 /** Pure calendar operations shared by views, exports, reminders and widgets. */
 public final class TimetableModel {
     private TimetableModel(){}
+    /** Default period times (节次 -> HH:mm-HH:mm). Used when no custom times are set. */
+    public static final String[] DEFAULT_PERIOD_TIMES = {
+        "08:20-09:05", // 第1节
+        "09:10-09:55", // 第2节
+        "10:15-11:00", // 第3节
+        "11:05-11:50", // 第4节
+        "13:00-13:45", // 第5节（午间休息后）
+        "13:50-14:35", // 第6节
+        "14:55-15:40", // 第7节
+        "15:45-16:30", // 第8节
+        "18:00-18:45", // 第9节（傍晚休息后）
+        "18:50-19:35", // 第10节
+        "19:40-20:25"  // 第11节
+    };
+    public static JSONArray defaultPeriodTimes(){
+        JSONArray times=new JSONArray();
+        for(String entry:DEFAULT_PERIOD_TIMES){String[] parts=entry.split("-");try{times.put(new JSONObject().put("start",parts[0]).put("end",parts[1]));}catch(JSONException e){throw new IllegalStateException(e);}}
+        return times;
+    }
     public static Calendar date(String date){try{SimpleDateFormat f=new SimpleDateFormat("yyyy-MM-dd",Locale.ROOT);f.setLenient(false);f.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));Date d=f.parse(date);if(!f.format(d).equals(date))return null;Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));c.setTime(d);c.set(Calendar.HOUR_OF_DAY,12);c.set(Calendar.MINUTE,0);c.set(Calendar.SECOND,0);c.set(Calendar.MILLISECOND,0);return c;}catch(Exception e){return null;}}
     public static boolean occurs(JSONObject c,int week){JSONArray weeks=c.optJSONArray("weeks");if(weeks!=null){for(int i=0;i<weeks.length();i++)if(weeks.optInt(i)==week)return true;return false;}return week>=c.optInt("startWeek",1)&&week<=c.optInt("endWeek",20)&&!("odd".equals(c.optString("parity"))&&week%2==0||"even".equals(c.optString("parity"))&&week%2!=0);}
     public static void validatePatches(JSONArray patches,int total)throws JSONException{
