@@ -41,6 +41,13 @@ function Write-AlignedZip([string]$InputPath, [string]$OutputPath) {
             $length = 46 + $nameLength + $extraLength + $commentLength
             $record = [byte[]]::new($length)
             [Array]::Copy($bytes, $cursor, $record, 0, $length)
+            # Windows aapt2 can use backslashes inside nested asset names.
+            # Android AssetManager requires ZIP paths with forward slashes.
+            if ([Text.Encoding]::UTF8.GetString($record, 46, $nameLength).StartsWith('assets/')) {
+                for ($n = 46; $n -lt 46 + $nameLength; $n++) {
+                    if ($record[$n] -eq 92) { $record[$n] = 47 }
+                }
+            }
             $offset = [BitConverter]::ToUInt32($record, 42)
             $compressedSize = [BitConverter]::ToUInt32($record, 20)
             $localName = [BitConverter]::ToUInt16($bytes, $offset + 26)
@@ -50,6 +57,7 @@ function Write-AlignedZip([string]$InputPath, [string]$OutputPath) {
             $padding = [int]((4 - (($stream.Position + $headerLength + 4) % 4)) % 4)
             $header = [byte[]]::new($headerLength)
             [Array]::Copy($bytes, $offset, $header, 0, $headerLength)
+            [Array]::Copy($record, 46, $header, 30, $nameLength)
             $flags = [uint16]([BitConverter]::ToUInt16($header, 6) -band 0xfff7)
             [Array]::Copy([BitConverter]::GetBytes($flags), 0, $header, 6, 2)
             [Array]::Copy([BitConverter]::GetBytes($flags), 0, $record, 8, 2)
