@@ -51,6 +51,7 @@ public final class SchoolWebActivity extends Activity {
     private String lastAcademicState="";
     private void log(String message){ if(!debuggable) return; android.util.Log.i("xinxinsync",message); }
     private Button importButton;
+    private Button postgraduateEntry;
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density*v+.5f); }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -96,6 +97,10 @@ public final class SchoolWebActivity extends Activity {
             LinearLayout guide=CampusUi.column(this);guide.setPadding(dp(15),dp(12),dp(15),dp(12));guide.setBackground(CampusUi.shape(this,CampusUi.SOFT,8));
             TextView guideTitle=CampusUi.text(this,syncAll?"正在同步课表、绩点与考试安排":autoSync?(academicService!=null?"正在读取学校数据":"正在为你获取课表"):"timetable".equals(service)?"登录 · 查询 · 导入":"在学校系统中查看",13,CampusUi.GREEN);guideTitle.setTypeface(null,android.graphics.Typeface.BOLD);guide.addView(guideTitle);
             TextView hint=CampusUi.text(this,academicService!=null?"登录成功后自动读取并保存在本机，之后打开即可离线查看。验证码或二次验证请在学校页面完成；读取失败时原有记录不会改变。":syncAll?"登录成功后自动读取并保存课表、学分绩点与考试安排。验证码或二次验证请在学校页面完成；某一项读取失败不影响其它数据。":autoSync?"登录成功后自动读取并保存课表。验证码或二次验证请在学校页面完成；若没有自动完成，可在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”。":"timetable".equals(service)?"打开个人课表，选择学期并查询，再点右上角“导入”。":(postgraduate?"研究生":"本科生")+"：登录后选择对应菜单；可在“更多”中返回学校首页。",12,CampusUi.INK);hint.setLineSpacing(dp(3),1);hint.setPadding(0,dp(5),0,0);guide.addView(hint);
+            if(postgraduate&&autoSync&&"timetable".equals(service)){
+                postgraduateEntry=CampusUi.button(this,"验证账号后可先进入应用",true,v->{if(authenticationAccepted&&AppSession.valid(this))enterApp();});
+                postgraduateEntry.setEnabled(false);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,dp(48));ep.topMargin=dp(10);guide.addView(postgraduateEntry,ep);
+            }
             LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,-2);gp.setMargins(dp(14),0,dp(14),dp(12));root.addView(guide,gp);
         }
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(CampusUi.GREEN));root.addView(progress,new LinearLayout.LayoutParams(-1,dp(2)));
@@ -200,7 +205,7 @@ public final class SchoolWebActivity extends Activity {
     private void revealSchool(){if(syncOverlay!=null)syncOverlay.setVisibility(View.GONE);}
     private void rejectLogin(String message){if(isFinishing())return;autoStopped=true;autoHandler.removeCallbacksAndMessages(null);pendingPassword="";if(web!=null)web.stopLoading();AppSession.login(this,message,academicService!=null?academicService:"timetable");}
     private void leaveSchool(){if(!AppSession.valid(this)){rejectLogin("登录尚未通过，请重新登录");return;}finish();}
-    private void acceptAuthentication()throws Exception{if(authenticationAccepted)return;if(pendingUsername.trim().isEmpty())throw new IllegalArgumentException("学校未确认学号，请重新登录");new SchoolAccount(this).save(postgraduate,pendingUsername,pendingPassword,rememberLogin&&!pendingPassword.isEmpty());AppSession.verified(this,postgraduate,pendingUsername);authenticationAccepted=true;}
+    private void acceptAuthentication()throws Exception{if(authenticationAccepted)return;if(pendingUsername.trim().isEmpty())throw new IllegalArgumentException("学校未确认学号，请重新登录");new SchoolAccount(this).save(postgraduate,pendingUsername,pendingPassword,rememberLogin&&!pendingPassword.isEmpty());AppSession.verified(this,postgraduate,pendingUsername);authenticationAccepted=true;if(postgraduateEntry!=null){postgraduateEntry.setEnabled(true);postgraduateEntry.setText("进入应用，稍后同步课表");revealSchool();}}
     private void enterApp(){pendingPassword="";autoStopped=true;startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
     private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){rejectLogin(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
     /** 自动流程失败后不把用户踢回登录页：留在学校页面，把导入交回「手动导入」。 */
