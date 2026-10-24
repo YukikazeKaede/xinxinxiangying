@@ -263,6 +263,45 @@ test('navigation never follows the entry to another origin and still honours rea
   assert.equal(runNav(password), 'needs-login');
 });
 
+function deferredWeeks(e) {
+  const pending = new Map(); let active = 0, peak = 0;
+  e.fetch = (target, options) => {
+    const week = Number(new URLSearchParams(options.body).get('zs'));
+    e.calls.push({target, options}); active++; peak = Math.max(peak, active);
+    return new Promise(resolve => pending.set(week, data => {
+      pending.delete(week); active--;
+      resolve({ok: true, text: async () => typeof data === 'string' ? data : JSON.stringify(data || {
+        kbList: [{kcmc: 'SYNTHETIC_WEEK_' + week, xqj: '1', jcs: '1-2', zcd: week + '周'}],
+        xsxx: {XM: 'SYNTHETIC_STUDENT'}
+      })});
+    }));
+  };
+  return {pending, peak: () => peak};
+}
+
+test('bounds concurrency to two and merges out-of-order responses by week', async () => {
+  const e = apiEnv(WEEKLY, {weeks: [1, 2, 3, 4, 5]}); const d = deferredWeeks(e);
+  runApi(e); d.pending.get(1)(); await flush();
+  assert.deepEqual([...d.pending.keys()], [2, 3]);
+  d.pending.get(3)(); await flush(); assert.deepEqual([...d.pending.keys()], [2, 4]);
+  d.pending.get(4)(); await flush(); d.pending.get(5)(); await flush();
+  assert.equal(e.__xinxinTimetableQuery.status, 'pending', '第2周未完成时不能提前交付');
+  d.pending.get(2)(); await flush(); const state = e.__xinxinTimetableQuery;
+  assert.equal(state.status, 'complete'); assert.equal(state.week, 5); assert.equal(d.peak(), 2);
+  assert.deepEqual(Array.from(state.raw.data.kbList, r => r.kcmc), [1,2,3,4,5].map(w => 'SYNTHETIC_WEEK_' + w));
+  assert.equal(e.__timers.length, 0, '没有逐周固定等待');
+});
+
+test('mid-pass login expiry stops scheduling and ignores late concurrent responses', async () => {
+  const e = apiEnv(WEEKLY, {weeks: [1, 2, 3, 4, 5]}); const d = deferredWeeks(e);
+  runApi(e); d.pending.get(1)(); await flush();
+  d.pending.get(2)('<html>login</html>'); await flush();
+  assert.equal(e.__xinxinTimetableQuery.reason, 'login');
+  d.pending.get(3)(); await flush();
+  assert.equal(e.calls.length, 3, '最多保留一个已发出的请求，不继续新请求');
+  assert.equal(e.__xinxinTimetableQuery.status, 'failed'); assert.equal(e.__xinxinTimetableQuery.raw, undefined);
+});
+
 (async () => {
   let failures = 0;
   for (const {name, fn} of cases) {

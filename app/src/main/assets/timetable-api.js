@@ -30,7 +30,7 @@
   }
   if (domWeeks) state.weeks = domWeeks;
   if (domStart) state.termStart = domStart;
-  var seen = {}, list = [], failed = [];
+  var seen = {}, list = [], failed = [], responses = {};
   function key(row) {
     return [row.kcmc, row.jxb_id, row.xqj, row.jcs, row.cdmc, row.zcd].join('\u001f');
   }
@@ -107,20 +107,32 @@
       probe(index + 1, done);
     });
   }
-  function walk(xnm, xqm, first, week) {
-    if (week > state.weeks) { finish(); return; }
-    state.week = week;
-    var step = week === 1 ? Promise.resolve(first) : fetchWeek(xnm, xqm, week);
-    step.then(function (data) {
-      collect(data);
-      window.setTimeout(function () { walk(xnm, xqm, first, week + 1); }, 120);
-    }, function (error) {
-      if (String(error && error.message) === 'login') { fail('login'); return; }
-      failed.push(week);
-      window.setTimeout(function () { walk(xnm, xqm, first, week + 1); }, 120);
-    });
+  function walk(xnm, xqm) {
+    var next = 2, active = 0;
+    function request(week) {
+      active++;
+      fetchWeek(xnm, xqm, week).then(function (data) {
+        if (state.status !== 'pending') return;
+        responses[week] = data; completed();
+      }, function (error) {
+        if (state.status !== 'pending') return;
+        if (String(error && error.message) === 'login') { fail('login'); return; }
+        failed.push(week); completed();
+      });
+    }
+    function completed() { active--; state.week++; pump(); }
+    function pump() {
+      if (state.status !== 'pending') return;
+      // 最多两个同源只读请求；不再在每周之间固定等待 120ms。
+      while (active < 2 && next <= state.weeks) request(next++);
+      if (!active && next > state.weeks) finish();
+    }
+    pump();
   }
   function finish() {
+    // 网络完成顺序不能影响课程顺序、去重结果或配色。
+    for (var week = 1; week <= state.weeks; week++) if (responses[week]) collect(responses[week]);
+    failed.sort(function (a, b) { return a - b; });
     if (!list.length) { state.status = 'empty'; state.reason = failed.length ? 'weeks-failed' : 'no-course'; return; }
     if (failed.length) state.failedWeeks = failed;
     state.raw = {url: endpoint, data: {kbList: list, xsxx: state.student || {}}};
@@ -133,9 +145,9 @@
     if (label) state.semester = label;
     var start = monday(first);
     if (start) state.termStart = start;
-    collect(first);
+    responses[1] = first;
     state.week = 1;
-    window.setTimeout(function () { walk(xnm, xqm, first, 2); }, 120);
+    walk(xnm, xqm);
   });
   return 'started';
 })(typeof __TIMETABLE_API__ === 'string' ? __TIMETABLE_API__ : '')

@@ -376,7 +376,7 @@ public final class SchoolWebActivity extends Activity {
             String stamp=state+":"+week+"/"+weeks+(reason.isEmpty()?"":":"+reason);
             if(!stamp.equals(lastQueryState)){lastQueryState=stamp;log("query "+stamp+" attempt="+attempt);}
             if("pending".equals(state)&&attempt<240){
-                if(weeks>1&&week>0)status.setText("正在获取第 "+week+"/"+weeks+" 周课程…");
+                if(weeks>1&&week>0)status.setText("课表读取进度 "+week+"/"+weeks+" 周…");
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(()->waitForTimetableQuery(url,attempt+1),500);
             }
             else if("complete".equals(state)) extractTimetable(url);
