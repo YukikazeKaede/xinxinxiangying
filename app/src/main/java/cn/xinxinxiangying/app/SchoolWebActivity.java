@@ -176,7 +176,8 @@ public final class SchoolWebActivity extends Activity {
             android.content.SharedPreferences accountPrefs=getSharedPreferences("school_session",MODE_PRIVATE);
             Runnable load=()->{if(web==null||isFinishing()||isDestroyed())return;accountPrefs.edit().putString("owner",owner).apply();web.loadUrl(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_SSO);};
             if(getIntent().getBooleanExtra("forceLogin",false)||!owner.equals(accountPrefs.getString("owner","")))CookieManager.getInstance().removeAllCookies(done->{CookieManager.getInstance().flush();android.webkit.WebStorage.getInstance().deleteAllData();load.run();});else load.run();
-        }else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
+        }else if("code".equals(service))web.loadUrl(SchoolCatalog.url(service,postgraduate),java.util.Collections.singletonMap("Cache-Control","no-cache"));
+        else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
     }
     private String readAsset(String name){try(java.io.InputStream in=getAssets().open(name)){java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}catch(Exception e){return "";}}
     private String assetOrNull(String name){String value=readAsset(name);return value.isEmpty()?null:value;}

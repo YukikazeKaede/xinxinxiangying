@@ -16,6 +16,7 @@ import java.util.concurrent.*;
 public final class PaymentCodeReuseInstrumentation extends Instrumentation {
     private MainActivity host;private SchoolWebActivity page;private WebViewClient client;private int checks,generation,retentions;
     private Class<?> pool;private String owner;private boolean live;private long nativeCreateMs;
+    private static final String PAINTED_CODE="(function(){if(location.origin!=='https://ecard.sit.edu.cn'||location.pathname!=='/epay/h5/v5qrcode')return false;return Array.from(document.querySelectorAll('[id*=qrcode i] canvas,[id*=qrcode i] img,[class*=qrcode i] canvas,[class*=qrcode i] img')).some(function(n){var r=n.getBoundingClientRect();if(r.width<=60||r.height<=60||n.tagName==='IMG'&&(!n.complete||n.naturalWidth<=60))return false;try{var c=document.createElement('canvas');c.width=c.height=256;var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,256,256);x.drawImage(n,0,0,256,256);var dark=0,light=0;for(var a=0;a<9;a++)for(var b=0;b<9;b++){var p=x.getImageData(Math.floor((a+.5)*256/9),Math.floor((b+.5)*256/9),1,1).data;var l=(p[0]+p[1]+p[2])/3;if(l<80)dark++;if(l>200)light++;}return dark>=8&&light>=8;}catch(e){return false;}});})()";
     @Override public void onCreate(Bundle args){super.onCreate(args);live=args!=null&&"benchmark".equals(args.getString("mode"));start();}
     private void check(boolean ok,String message){checks++;if(!ok)throw new AssertionError(message);}
     private Object field(Object target,String name)throws Exception{Class<?> c=target instanceof Class?(Class<?>)target:target.getClass();java.lang.reflect.Field f=c.getDeclaredField(name);f.setAccessible(true);return f.get(target instanceof Class?null:target);}
@@ -25,7 +26,7 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
     private void retain(WebView v,String scope)throws Exception{invoke("retain",new Class<?>[]{WebView.class,String.class},v,scope);}
     private void ui(Runnable r){runOnMainSync(r);}
     private void uiChecked(Callable<?> r){ui(()->{try{r.call();}catch(Exception e){throw new RuntimeException(e);}});}
-    private void ready()throws Exception{int stage=++retentions;for(int i=0;i<50;i++){final boolean[] b={false};uiChecked(()->{b[0]=(Boolean)field(pool,"ready");return null;});if(b[0])return;SystemClock.sleep(100);}throw new AssertionError("blank pool not ready at retention "+stage+", cached="+(field(pool,"cached")!=null)+", host="+field(MainActivity.class,"paymentHostVisible"));}
+    private void ready()throws Exception{int stage=++retentions;for(int i=0;i<120;i++){final boolean[] b={false};uiChecked(()->{b[0]=(Boolean)field(pool,"ready");return null;});if(b[0])return;SystemClock.sleep(100);}throw new AssertionError("blank pool not ready at retention "+stage+", cached="+(field(pool,"cached")!=null)+", host="+field(MainActivity.class,"paymentHostVisible"));}
     private String js(WebView v,String script)throws Exception{CountDownLatch done=new CountDownLatch(1);String[] result={""};ui(()->v.evaluateJavascript(script,s->{result[0]=s;done.countDown();}));check(done.await(3,TimeUnit.SECONDS),"JS callback completed");return result[0];}
     @Override public void callActivityOnCreate(Activity activity,Bundle state){
         long started=SystemClock.elapsedRealtime();super.callActivityOnCreate(activity,state);if(!(activity instanceof SchoolWebActivity))return;nativeCreateMs=SystemClock.elapsedRealtime()-started;if(live)return;
@@ -51,13 +52,14 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
             pool=Class.forName("cn.xinxinxiangying.app.PaymentCodeWebView");
             host=(MainActivity)startActivitySync(new Intent(getTargetContext(),MainActivity.class).putExtra("tab",1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
             org.json.JSONArray samples=new org.json.JSONArray();
-            // Warm up once, then alternate independent native instances and retained blank instances.
-            String[] modes={"warmup","new","reuse","reuse","new","new","reuse"};
+            // Excludes time spent on the tools tab; measures tap-to-pattern after optional preload.
+            String[] modes={"warmup","new","preload","reuse","preload","new","reuse","new","reuse","preload"};
             for(String mode:modes){
-                if("new".equals(mode))uiChecked(()->{clear();return null;});
+                if("new".equals(mode))uiChecked(()->{host.selectTab(0);clear();return null;});
+                if("preload".equals(mode)){ui(()->{host.selectTab(0);host.selectTab(1);});ready();}
                 WebView before=(WebView)field(pool,"cached");long started=SystemClock.elapsedRealtime();WebView v=open("code");boolean shown=false;
                 while(SystemClock.elapsedRealtime()-started<30000&&!page.isFinishing()){
-                    if("true".equals(js(v,"location.origin==='https://ecard.sit.edu.cn'&&location.pathname==='/epay/h5/v5qrcode'&&Array.from(document.querySelectorAll('[id*=qrcode i] canvas,[id*=qrcode i] img,[class*=qrcode i] canvas,[class*=qrcode i] img')).some(function(n){var r=n.getBoundingClientRect();return r.width>60&&r.height>60&&(n.tagName==='CANVAS'?n.width>0:n.complete&&n.naturalWidth>0)})"))){shown=true;break;}
+                    if("true".equals(js(v,PAINTED_CODE))){shown=true;break;}
                     SystemClock.sleep(200);
                 }
                 long elapsed=SystemClock.elapsedRealtime()-started;
@@ -79,8 +81,24 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
             c.getSharedPreferences("school_session",0).edit().putString("identity","ug:SYNTHETIC_REUSE").commit();c.getSharedPreferences("app_update",0).edit().putLong("last_check",System.currentTimeMillis()).commit();
             pool=Class.forName("cn.xinxinxiangying.app.PaymentCodeWebView");owner=(String)invoke("owner",new Class<?>[]{Context.class,boolean.class},c,false);
             check(!owner.isEmpty()&&"".equals(invoke("owner",new Class<?>[]{Context.class,boolean.class},c,true)),"owner requires matching verified student type");
-            host=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).putExtra("tab",1).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
-            final WebView[] box={null};uiChecked(()->{box[0]=take(owner);box[0].getSettings().setJavaScriptEnabled(true);return null;});WebView first=box[0];
+            host=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));waitForIdleSync();
+            final WebView[] box={null};
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);WebView warm=(WebView)field(pool,"cached");box[0]=warm;WebViewClient real=warm.getWebViewClient();
+                warm.setWebViewClient(new WebViewClient(){
+                    @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){return new WebResourceResponse("text/html","UTF-8",new ByteArrayInputStream("<script>window.SYNTHETIC_PRELOADED_CODE=true</script>".getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+                    @Override public void onPageStarted(WebView v,String u,Bitmap b){real.onPageStarted(v,u,b);}
+                    @Override public void onPageFinished(WebView v,String u){real.onPageFinished(v,u);}
+                });return null;});ready();
+            check("true".equals(js(box[0],"location.href==='about:blank'&&typeof window.SYNTHETIC_PRELOADED_CODE==='undefined'")),"preload discards generated code and timer document");
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);return null;});check(field(pool,"cached")==box[0],"ready cache does not trigger another preload");
+            uiChecked(()->{WebView warm=box[0];box[0]=take(owner);check(box[0]==warm,"completed blank preload is reusable");box[0].destroy();clear();return null;});
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);WebView warming=(WebView)field(pool,"cached");box[0]=take(owner);check(box[0]!=warming,"click during preload falls back without showing its document");box[0].destroy();return null;});
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);WebView warming=(WebView)field(pool,"cached");check(warming.getWebViewClient().shouldOverrideUrlLoading(warming,SchoolCatalog.AUTH),"hidden preload refuses login redirects");check(field(pool,"cached")==null,"redirect destroys preload");return null;});
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);((Runnable)field(pool,"preloadTimeout")).run();check(field(pool,"cached")==null,"preload timeout discards its document");return null;});
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,false);WebView warming=(WebView)field(pool,"cached");WebResourceRequest request=new WebResourceRequest(){public Uri getUrl(){return Uri.parse(SchoolCatalog.url("code",false));}public boolean isForMainFrame(){return true;}public boolean isRedirect(){return false;}public boolean hasGesture(){return false;}public String getMethod(){return "GET";}public Map<String,String> getRequestHeaders(){return Collections.emptyMap();}};warming.getWebViewClient().onReceivedHttpError(warming,request,new WebResourceResponse("text/plain","UTF-8",500,"Synthetic failure",Collections.emptyMap(),new ByteArrayInputStream(new byte[0])));check(field(pool,"cached")==null,"HTTP failure abandons preload");return null;});
+            uiChecked(()->{invoke("preload",new Class<?>[]{Activity.class,boolean.class},host,true);check(field(pool,"cached")==null,"mismatched student type cannot preload");return null;});
+            uiChecked(()->{host.selectTab(1);WebView warming=(WebView)field(pool,"cached");check(warming!=null,"tools tab starts foreground preload");host.selectTab(0);check(field(pool,"cached")==null,"leaving tools tab cancels preload");host.selectTab(0);return null;});
+            uiChecked(()->{box[0]=take(owner);box[0].getSettings().setJavaScriptEnabled(true);return null;});WebView first=box[0];
             check(first.getContext() instanceof MutableContextWrapper,"mutable context for safe Activity rebinding");
             ui(()->first.loadDataWithBaseURL("https://ecard.sit.edu.cn/epay/h5/v5qrcode","<script>window.SYNTHETIC_OLD_CODE=true;setInterval(function(){window.SYNTHETIC_TICK=1},20)</script>","text/html","UTF-8",null));
             for(int i=0;i<30&&!"true".equals(js(first,"window.SYNTHETIC_OLD_CODE===true"));i++)SystemClock.sleep(100);
@@ -92,6 +110,8 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
             check("[true,true,true]".equals(blank),"old document and timer state removed before reuse: "+blank);
             uiChecked(()->{retain(first,owner);return null;});ready();
             WebView actual=open("code");check(actual==first,"native code entry takes warm view");check((Boolean)field(page,"paymentReady"),"official-origin fresh document completed");
+            check("false".equals(js(actual,PAINTED_CODE)),"empty canvas is not a drawn code");
+            js(actual,"(function(){var x=document.querySelector('#qrcode canvas').getContext('2d');x.fillStyle='white';x.fillRect(0,0,120,120);x.fillStyle='black';x.fillRect(0,0,60,120);})()");check("true".equals(js(actual,PAINTED_CODE)),"contrast sampling detects drawn pattern without decoding or exporting it");
             check(((MutableContextWrapper)actual.getContext()).getBaseContext()==page,"native Activity context is rebound");
             check("true".equals(js(actual,"window.SYNTHETIC_GENERATION==="+generation+"&&typeof window.SYNTHETIC_OLD_CODE==='undefined'")),"new visit executes a new school document");
             back();ready();WebView second=open("code");check(second==actual,"back then reopen reuses the instance");
@@ -105,11 +125,12 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
             uiChecked(()->{retain(box[0],owner);return null;});ready();ui(()->AppSession.invalidate(c));check(field(pool,"cached")==null,"session invalidation clears retained instance");
             c.getSharedPreferences("school_session",0).edit().putString("identity","ug:SYNTHETIC_REUSE").commit();
             uiChecked(()->{box[0]=take(owner);retain(box[0],owner);return null;});ready();WebView beforeOther=box[0];
-            WebView other=open("card");check(other!=beforeOther&&!(other.getContext() instanceof MutableContextWrapper),"other school services use their own WebView");ui(()->page.finish());waitForIdleSync();page=null;
+            WebView other=open("card");check(other!=beforeOther&&!(other.getContext() instanceof MutableContextWrapper),"other school services use their own WebView");ui(()->page.finish());waitForIdleSync();for(int i=0;i<50&&!(Boolean)field(MainActivity.class,"paymentHostVisible");i++)SystemClock.sleep(100);check((Boolean)field(MainActivity.class,"paymentHostVisible"),"host resumed after another school service");page=null;
             uiChecked(()->{box[0]=take(owner);retain(box[0],owner);return null;});ready();ui(()->host.onTrimMemory(android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW));check(field(pool,"cached")==null,"memory pressure clears warm instance");
-            uiChecked(()->{box[0]=take(owner);retain(box[0],owner);return null;});ready();ui(()->host.moveTaskToBack(true));
+            uiChecked(()->{box[0]=take(owner);retain(box[0],owner);return null;});ready();ui(()->host.startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
             for(int i=0;i<30&&field(pool,"cached")!=null;i++)SystemClock.sleep(100);
             check(field(pool,"cached")==null,"leaving app foreground clears warm instance");
+            open("code");SchoolWebActivity background=page;ui(()->background.startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));for(int i=0;i<30&&!background.isFinishing();i++)SystemClock.sleep(100);check(background.isFinishing()&&field(pool,"cached")==null,"backgrounding active code finishes it without retention");page=null;
             report.putString("result","PASS "+checks+" checks");
         }catch(Throwable e){report.putString("result","FAIL "+e.getClass().getSimpleName()+": "+e.getMessage());result=Activity.RESULT_CANCELED;}
         finally{if(page!=null)ui(()->page.finish());if(host!=null)ui(()->host.finish());if(owned){new SchoolAccount(c).clear();AppSession.invalidate(c);}}

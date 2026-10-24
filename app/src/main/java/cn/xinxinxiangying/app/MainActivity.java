@@ -21,6 +21,7 @@ public final class MainActivity extends Activity {
     private LinearLayout content;
     private SharedPreferences prefs;
     private int selectedTab=0;
+    private boolean paymentPreloadAttempted;
     private static final int PICK_AVATAR=4102;
     private String avatarOwner="";
     private LinearLayout shell,navHost;private FrameLayout pages;private final View[] tabViews=new View[3];private TimetableScreen timetable;
@@ -51,6 +52,8 @@ public final class MainActivity extends Activity {
         if(tabViews[selectedTab]==null&&selectedTab!=0){ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);content=CampusUi.column(this);content.setPadding(0,0,0,dp(20));content.setBackground(selectedTab==2?CampusUi.wash(true):CampusUi.shape(this,CampusUi.BG,0));scroll.addView(content);if(selectedTab==2)showProfile();else showCampus();tabViews[selectedTab]=scroll;}
         View current=tabViews[selectedTab];if(current!=null){pages.removeAllViews();if(current.getParent()!=null)((android.view.ViewGroup)current.getParent()).removeView(current);pages.addView(current,new FrameLayout.LayoutParams(-1,-1));}
         navHost.removeAllViews();navHost.addView(CampusUi.navigation(this,selectedTab));
+        if(selectedTab!=1){if(paymentPreloadAttempted)PaymentCodeWebView.clear();paymentPreloadAttempted=false;}
+        else if(paymentHostVisible&&!paymentPreloadAttempted){paymentPreloadAttempted=true;PaymentCodeWebView.preload(this,isPostgraduate());}
     }
     private void heading(String title,String subtitle){
         TextView h=text(title,30,ink);h.setTypeface(null,Typeface.BOLD);content.addView(h);
