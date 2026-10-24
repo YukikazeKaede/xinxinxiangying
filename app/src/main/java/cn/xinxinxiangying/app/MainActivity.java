@@ -16,10 +16,12 @@ import android.widget.*;
 
 /** Independent campus service entry; does not claim unverified native integrations. */
 public final class MainActivity extends Activity {
+    static boolean paymentHostVisible;
     private final int ink=CampusUi.INK, muted=CampusUi.MUTED, teal=CampusUi.GREEN;
     private LinearLayout content;
     private SharedPreferences prefs;
     private int selectedTab=0;
+    private boolean paymentPreloadAttempted;
     private static final int PICK_AVATAR=4102;
     private String avatarOwner="";
     private LinearLayout shell,navHost;private FrameLayout pages;private final View[] tabViews=new View[3];private TimetableScreen timetable;
@@ -35,8 +37,10 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!AppSession.require(this))return;selectedTab=intent.getIntExtra("tab",0);if(timetable!=null)timetable.resume();showHome();showRequestedSettings();}
     @Override public void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putInt("tab",selectedTab);state.putString("avatarOwner",avatarOwner);if(timetable!=null)timetable.saveState(state);}
-    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
-    @Override public void onPause(){if(timetable!=null)timetable.pause();super.onPause();}
+    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;paymentHostVisible=true;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
+    @Override public void onPause(){paymentHostVisible=false;if(timetable!=null)timetable.pause();super.onPause();}
+    @Override public void onStop(){PaymentCodeWebView.clear();super.onStop();}
+    @Override public void onTrimMemory(int level){if(level>=TRIM_MEMORY_RUNNING_LOW)PaymentCodeWebView.clear();super.onTrimMemory(level);}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==PICK_AVATAR){saveAvatar(result,data);return;}if(timetable!=null&&AppSession.valid(this))timetable.result(request,result,data);}
     @Override public void onBackPressed(){if(selectedTab!=0){selectTab(0);return;}super.onBackPressed();}
     private void showRequestedSettings(){if(timetable!=null&&getIntent().getBooleanExtra("showSettings",false)){getIntent().removeExtra("showSettings");timetable.showSettings();}}
@@ -48,6 +52,8 @@ public final class MainActivity extends Activity {
         if(tabViews[selectedTab]==null&&selectedTab!=0){ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);content=CampusUi.column(this);content.setPadding(0,0,0,dp(20));content.setBackground(selectedTab==2?CampusUi.wash(true):CampusUi.shape(this,CampusUi.BG,0));scroll.addView(content);if(selectedTab==2)showProfile();else showCampus();tabViews[selectedTab]=scroll;}
         View current=tabViews[selectedTab];if(current!=null){pages.removeAllViews();if(current.getParent()!=null)((android.view.ViewGroup)current.getParent()).removeView(current);pages.addView(current,new FrameLayout.LayoutParams(-1,-1));}
         navHost.removeAllViews();navHost.addView(CampusUi.navigation(this,selectedTab));
+        if(selectedTab!=1){if(paymentPreloadAttempted)PaymentCodeWebView.clear();paymentPreloadAttempted=false;}
+        else if(paymentHostVisible&&!paymentPreloadAttempted){paymentPreloadAttempted=true;PaymentCodeWebView.preload(this,isPostgraduate());}
     }
     private void heading(String title,String subtitle){
         TextView h=text(title,30,ink);h.setTypeface(null,Typeface.BOLD);content.addView(h);

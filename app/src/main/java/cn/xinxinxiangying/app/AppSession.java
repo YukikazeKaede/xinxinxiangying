@@ -35,6 +35,7 @@ public final class AppSession {
     }
     public static synchronized void invalidate(Context c){
         identity="";
+        PaymentCodeWebView.clear();
         c.getApplicationContext().getSharedPreferences(STORE,0).edit().remove(KEY).commit();
     }
     public static void login(Activity a,String message){login(a,message,"timetable");}

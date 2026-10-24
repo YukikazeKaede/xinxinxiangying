@@ -20,6 +20,7 @@ import java.util.Locale;
 /** User-operated school website session. Never posts credentials or initiates orders itself. */
 public final class SchoolWebActivity extends Activity {
     private WebView web;
+    private String paymentOwner="";private boolean paymentReady,retainPayment;
     private boolean authenticationAccepted;
     private boolean autoSync, autoStopped, autoQueryStarted, rememberLogin;
     private String pendingUsername="", pendingPassword="", loginScript="", navigationScript="",sessionScript="";
@@ -99,7 +100,8 @@ public final class SchoolWebActivity extends Activity {
             LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,-2);gp.setMargins(dp(14),0,dp(14),dp(12));root.addView(guide,gp);
         }
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(CampusUi.GREEN));root.addView(progress,new LinearLayout.LayoutParams(-1,dp(2)));
-        web=new WebView(this);
+        if("code".equals(service)&&!autoSync){paymentOwner=PaymentCodeWebView.owner(this,postgraduate);web=PaymentCodeWebView.obtain(this,paymentOwner);web.setVisibility(View.INVISIBLE);}
+        else web=new WebView(this);
         if(autoSync){FrameLayout stage=new FrameLayout(this);stage.addView(web,new FrameLayout.LayoutParams(-1,-1));LinearLayout loading=CampusUi.column(this);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(CampusUi.BG);loading.addView(new CampusUi.ScheduleArt(this),new LinearLayout.LayoutParams(dp(150),dp(140)));TextView message=CampusUi.text(this,syncAll?"正在登录学校并同步课表与成绩…":academicService!=null?"正在登录学校并读取数据…":"正在登录学校并查询课表…",15,CampusUi.INK);message.setGravity(android.view.Gravity.CENTER);message.setPadding(dp(20),dp(24),dp(20),dp(20));loading.addView(message);loading.addView(new ProgressBar(this),new LinearLayout.LayoutParams(dp(28),dp(28)));syncOverlay=loading;stage.addView(loading,new FrameLayout.LayoutParams(-1,-1));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));}
         else root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         WebSettings settings=web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
@@ -135,6 +137,7 @@ public final class SchoolWebActivity extends Activity {
                 if(SchoolCatalog.isSchoolUrl(url)) return false; confirmExternal(url); return true;
             }
             @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon) {
+                paymentReady=false;
                 navigationFailed=false;pageVersion++;
                 log("start "+pageVersion+" "+url);
                 if(!SchoolCatalog.isSchoolUrl(url)) {
@@ -142,6 +145,7 @@ public final class SchoolWebActivity extends Activity {
                 }
                 status.setText("正在连接 · "+safeHost(url));
             }
+            @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))view.setVisibility(View.VISIBLE);}
             @Override public void onPageFinished(WebView view,String url) {
                 if(url==null||!url.equals(view.getUrl()))return;
                 if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url)) status.setText("校方页面 · "+safeHost(url));
@@ -149,7 +153,7 @@ public final class SchoolWebActivity extends Activity {
                 if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
                     view.evaluateJavascript(timetableScript,null);
-                if(!autoSync&&!navigationFailed){view.evaluateJavascript("!!document.querySelector('input[type=password]')",value->{if("true".equals(value)&&!isFinishing())rejectLogin("学校登录已失效，请重新登录");});}
+                if(!autoSync&&!navigationFailed){int proofVersion=pageVersion;view.evaluateJavascript("!!document.querySelector('input[type=password]')",value->{if(web==null||isFinishing()||navigationFailed||proofVersion!=pageVersion||!url.equals(web.getUrl()))return;if("true".equals(value))rejectLogin("学校登录已失效，请重新登录");else paymentReady="code".equals(service)&&SchoolCatalog.url("code",postgraduate).equals(url);});}
                 if(autoSync&&!autoStopped&&!navigationFailed)advanceAuto(pageVersion);
                 // 「手动导入」先打开课表页时，页面加载完再自动接着读一次，用户只需点一次。
                 if(!navigationFailed&&manualAfterNav)continueManualImport(url);
@@ -172,7 +176,8 @@ public final class SchoolWebActivity extends Activity {
             android.content.SharedPreferences accountPrefs=getSharedPreferences("school_session",MODE_PRIVATE);
             Runnable load=()->{if(web==null||isFinishing()||isDestroyed())return;accountPrefs.edit().putString("owner",owner).apply();web.loadUrl(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_SSO);};
             if(getIntent().getBooleanExtra("forceLogin",false)||!owner.equals(accountPrefs.getString("owner","")))CookieManager.getInstance().removeAllCookies(done->{CookieManager.getInstance().flush();android.webkit.WebStorage.getInstance().deleteAllData();load.run();});else load.run();
-        }else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
+        }else if("code".equals(service))web.loadUrl(SchoolCatalog.url(service,postgraduate),java.util.Collections.singletonMap("Cache-Control","no-cache"));
+        else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
     }
     private String readAsset(String name){try(java.io.InputStream in=getAssets().open(name)){java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}catch(Exception e){return "";}}
     private String assetOrNull(String name){String value=readAsset(name);return value.isEmpty()?null:value;}
@@ -199,7 +204,7 @@ public final class SchoolWebActivity extends Activity {
     }
     private void revealSchool(){if(syncOverlay!=null)syncOverlay.setVisibility(View.GONE);}
     private void rejectLogin(String message){if(isFinishing())return;autoStopped=true;autoHandler.removeCallbacksAndMessages(null);pendingPassword="";if(web!=null)web.stopLoading();AppSession.login(this,message,academicService!=null?academicService:"timetable");}
-    private void leaveSchool(){if(!AppSession.valid(this)){rejectLogin("登录尚未通过，请重新登录");return;}finish();}
+    private void leaveSchool(){if(!AppSession.valid(this)){rejectLogin("登录尚未通过，请重新登录");return;}retainPayment=paymentReady&&!navigationFailed;finish();}
     private void acceptAuthentication()throws Exception{if(authenticationAccepted)return;if(pendingUsername.trim().isEmpty())throw new IllegalArgumentException("学校未确认学号，请重新登录");new SchoolAccount(this).save(postgraduate,pendingUsername,pendingPassword,rememberLogin&&!pendingPassword.isEmpty());AppSession.verified(this,postgraduate,pendingUsername);authenticationAccepted=true;}
     private void enterApp(){pendingPassword="";autoStopped=true;startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
     private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){rejectLogin(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
@@ -636,12 +641,17 @@ public final class SchoolWebActivity extends Activity {
                 catch(ActivityNotFoundException e) { Toast.makeText(this,"没有可处理此链接的应用",Toast.LENGTH_LONG).show(); }
             }).show();
     }
-    @Override public void onBackPressed() { if(!AppSession.valid(this)){leaveSchool();return;}if(web!=null&&web.canGoBack())web.goBack();else finish(); }
+    @Override public void onBackPressed() { if("code".equals(service)||!AppSession.valid(this)){leaveSchool();return;}if(web!=null&&web.canGoBack())web.goBack();else finish(); }
     @Override protected void onPause() { if(web!=null) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if(web!=null) web.onResume(); }
+    @Override protected void onStop(){super.onStop();if("code".equals(service)&&!isFinishing()){retainPayment=false;finish();}}
     @Override protected void onDestroy() {
         autoHandler.removeCallbacksAndMessages(null);pendingPassword="";
-        if(web!=null) { web.stopLoading(); web.setWebChromeClient(null); web.setWebViewClient(new WebViewClient()); web.destroy(); web=null; }
+        if(web!=null) {
+            if(retainPayment&&!navigationFailed&&!paymentOwner.isEmpty()&&paymentOwner.equals(PaymentCodeWebView.owner(this,postgraduate)))PaymentCodeWebView.retain(web,paymentOwner);
+            else{web.stopLoading();web.setWebChromeClient(null);web.setWebViewClient(new WebViewClient());web.destroy();}
+            web=null;
+        }
         super.onDestroy();
     }
 }
