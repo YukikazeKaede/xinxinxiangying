@@ -40,7 +40,7 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==PICK_AVATAR){saveAvatar(result,data);return;}if(timetable!=null&&AppSession.valid(this))timetable.result(request,result,data);}
     @Override public void onBackPressed(){if(selectedTab!=0){selectTab(0);return;}super.onBackPressed();}
     private void showRequestedSettings(){if(timetable!=null&&getIntent().getBooleanExtra("showSettings",false)){getIntent().removeExtra("showSettings");timetable.showSettings();}}
-    public void selectTab(int tab){if(!AppSession.require(this))return;if(tab<0||tab>2)return;selectedTab=tab;showHome();}
+    public void selectTab(int tab){if(!AppSession.require(this))return;if(tab<0||tab>2)return;if(tab==1)tabViews[1]=null;selectedTab=tab;showHome();}
     private void gap(int h){content.addView(new View(this),new LinearLayout.LayoutParams(1,dp(h)));}
     private void showHome(){
         if(pages==null||!AppSession.valid(this))return;
@@ -58,13 +58,28 @@ public final class MainActivity extends Activity {
     private void showCampus(){
         TextView bar=text("心心相应",16,Color.WHITE);bar.setGravity(Gravity.CENTER);bar.setBackgroundColor(teal);content.addView(bar,new LinearLayout.LayoutParams(-1,dp(48)));
         FrameLayout banner=new FrameLayout(this);banner.addView(new CampusUi.CampusArt(this),new FrameLayout.LayoutParams(-1,-1));
-        TextView caption=text("上海应用技术大学",18,Color.WHITE);caption.setTypeface(null,Typeface.BOLD);caption.setGravity(Gravity.BOTTOM);caption.setPadding(dp(20),0,dp(20),dp(15));caption.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x00000000,0x80052f29}));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(176)));gap(14);
+        LinearLayout caption=CampusUi.column(this);caption.setGravity(Gravity.BOTTOM);caption.setPadding(dp(20),dp(16),dp(20),dp(16));caption.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x20052f29,0xe6052f29}));
+        TextView schoolName=text("上海应用技术大学",18,Color.WHITE);schoolName.setTypeface(null,Typeface.BOLD);caption.addView(schoolName);
+        java.util.Calendar today=java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Shanghai"));
+        java.text.SimpleDateFormat dateFormat=new java.text.SimpleDateFormat("M月d日 EEEE",java.util.Locale.CHINA);dateFormat.setTimeZone(today.getTimeZone());
+        TextView date=text(dateFormat.format(today.getTime()),12,0xffe5f4ef);date.setPadding(0,dp(7),0,dp(5));caption.addView(date);
+        String summary;try{summary=campusSummary(new TimetableRepository(this).read(),today);}catch(RuntimeException e){summary="课表暂无法读取，请重新同步";}
+        caption.addView(text(summary,14,Color.WHITE));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(176)));gap(14);
         LinearLayout identity=panel(12);identity.setOrientation(LinearLayout.HORIZONTAL);identity.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout info=CampusUi.column(this);TextView school=text("我的校园",18,teal);school.setTypeface(null,Typeface.BOLD);info.addView(school);TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(0,dp(4),0,0);info.addView(student);identity.addView(info,new LinearLayout.LayoutParams(0,-2,1));Button change=CampusUi.button(this,"切换身份",false,v->selectProfile());identity.addView(change,new LinearLayout.LayoutParams(-2,dp(44)));gap(14);
         LinearLayout services=panel(12);
         serviceGrid(services,new String[]{"exams","gpa"},new String[]{"考试安排","学分绩点"},new int[]{0xff5986cf,0xffec956a});gap(18);
         LinearLayout life=panel(12);section(life,"生活助手");serviceGrid(life,new String[]{"card","code","electricity"},new String[]{"校园卡","校园付款码","宿舍电费"},new int[]{0xff458ec7,0xffd5a34e,0xff62a481});gap(16);
         gap(20);TextView note=text("校园服务由学校系统提供",11,muted);note.setGravity(Gravity.CENTER);content.addView(note);
+    }
+    static String campusSummary(org.json.JSONObject doc,java.util.Calendar today){
+        org.json.JSONArray courses=doc.optJSONArray("courses");if(courses==null||courses.length()==0)return "同步课表，查看今日课程";
+        java.util.Calendar start=TimetableModel.date(doc.optString("startDate"));if(start==null)return "设置开学日期，查看本周与今日课程";
+        java.util.Calendar date=(java.util.Calendar)today.clone();date.set(java.util.Calendar.HOUR_OF_DAY,12);date.set(java.util.Calendar.MINUTE,0);date.set(java.util.Calendar.SECOND,0);date.set(java.util.Calendar.MILLISECOND,0);
+        java.util.Calendar end=(java.util.Calendar)start.clone();end.add(java.util.Calendar.DATE,doc.optInt("totalWeeks",20)*7);
+        if(date.before(start)||!date.before(end))return "当前不在教学周";
+        int week=TimetableModel.week(doc,date),day=(date.get(java.util.Calendar.DAY_OF_WEEK)+5)%7+1;
+        int count=TimetableModel.day(doc,week,day).length();return "第 "+week+" 周 · "+(count==0?"今日没有课程":"今日 "+count+" 项课程安排");
     }
     private void section(LinearLayout box,String title){TextView t=text(title,17,ink);t.setPadding(dp(10),0,0,0);GradientDrawable marker=CampusUi.shape(this,teal,0);android.graphics.drawable.LayerDrawable bg=new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{marker});bg.setLayerWidth(0,dp(3));bg.setLayerHeight(0,dp(18));bg.setLayerGravity(0,Gravity.LEFT|Gravity.CENTER_VERTICAL);t.setBackground(bg);box.addView(t);}
     private void serviceGrid(LinearLayout parent,String[] ids,String[] titles,int[] colors){
