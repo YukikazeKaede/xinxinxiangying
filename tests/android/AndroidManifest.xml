@@ -3,6 +3,7 @@
     <application android:label="心心相应测试" />
     <instrumentation android:name=".TimetableFeaturesInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".TimetableInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".PaymentCodeTimingInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".LoginFailureInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".CampusProfileInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
 </manifest>
