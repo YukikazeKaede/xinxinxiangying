@@ -34,6 +34,12 @@
 - 构建所需的 `toolchain/`（JDK、Android SDK）和签名材料 `_private/` 只存在于各人本机，被 `.gitignore` 忽略，永不提交；成员自己按 `docs/BUILD.md` 准备。
 - 不要在本地维护两份源码。日常开发就在 clone 出来的仓库里做，把 `toolchain/` 放进 clone 根目录即可构建。
 
+### 1.1 贡献许可与商业再许可
+
+许可范围以 [docs/LICENSING.md](docs/LICENSING.md)、根目录 LICENSE 及历史 MIT 声明为准。新原创贡献按 PolyForm Noncommercial 1.0.0 发布；维护者提供独立商业授权所需的权利，须依 [CLA v1.0](docs/CLA.md) 另行明确授予。
+
+提交代码前读完 CLA，在本人账号的对应 PR 评论中明确同意其固定版本，并指明贡献范围。合并前维护者记录协议链接、同意评论、账号、时间和提交范围；涉及雇主或第三方权利时先确认授权。仅勾选 PR 模板或提交代码不视为已完成 CLA。旧 MIT 贡献保留原授权，不自动视为补签。
+
 ## 2. 加入协作者
 
 1. 维护者在 GitHub 仓库页 → **Settings → Collaborators and teams → Add people**，填对方 GitHub 用户名，权限选 **Write**。
@@ -136,6 +142,7 @@ chore/<主题>    构建、脚本   chore/build-ascii
 - [ ] Release 已设为 latest
 - [ ] CHANGELOG 已更新，Notes 与 CHANGELOG 该条一致
 - [ ] 旧版本实测覆盖安装成功
+- [ ] 已按 [许可发布准备](docs/RELEASE-LICENSING.md) 核对历史 MIT 边界、新贡献授权、公告和 APK 中的许可文件
 
 ## 6. 红线
 
