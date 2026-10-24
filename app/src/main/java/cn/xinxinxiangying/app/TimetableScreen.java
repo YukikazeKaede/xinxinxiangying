@@ -73,7 +73,7 @@ public final class TimetableScreen extends android.content.ContextWrapper {
         LinearLayout meta=new LinearLayout(this);meta.setGravity(Gravity.CENTER_VERTICAL);meta.setPadding(dp(22),0,dp(16),dp(9));
         semesterTitle=label(hasCourses?document.optString("semester","我的课表"):"我的课表",12,CampusUi.MUTED);semesterTitle.setOnClickListener(v->tools.semesters());semesterTitle.setContentDescription("切换学期");semesterTitle.setGravity(Gravity.CENTER_VERTICAL);meta.addView(semesterTitle,new LinearLayout.LayoutParams(0,dp(40),1));
         boolean daily="daily".equals(document.optString("viewMode"));Button mode=button(daily?"周课表":"每日安排",v->setViewMode(daily?"weekly":"daily"));mode.setTextSize(12);mode.setGravity(Gravity.CENTER);mode.setPadding(dp(10),0,dp(10),0);mode.setBackground(CampusUi.ripple(this,0x88ffffff,8));mode.setOnClickListener(v->setViewMode(daily?"weekly":"daily"));meta.addView(mode,new LinearLayout.LayoutParams(-2,dp(40)));header.addView(meta);root.addView(header);
-        FrameLayout stage=new FrameLayout(this);stage.setBackgroundColor(Color.WHITE);
+        FrameLayout stage=new WeekSwipeFrame();stage.setBackgroundColor(Color.WHITE);
         if(daily){renderDaily(schedule);}else{
             ScrollView vertical=new ScrollView(this);vertical.setFillViewport(true);vertical.setVerticalScrollBarEnabled(false);HorizontalScrollView horizontal=new HorizontalScrollView(this);horizontal.setFillViewport(true);horizontal.setHorizontalScrollBarEnabled(false);
             int screen=getResources().getDisplayMetrics().widthPixels;int width=Math.max(screen,dp(56+visibleDayCount*44));Grid grid=new Grid(visibleCourses,width);timetableView=grid;horizontal.addView(grid,new HorizontalScrollView.LayoutParams(width,grid.height));vertical.addView(horizontal,new ScrollView.LayoutParams(-1,-2));stage.addView(vertical,new FrameLayout.LayoutParams(-1,-1));
@@ -95,7 +95,26 @@ public final class TimetableScreen extends android.content.ContextWrapper {
         ScrollView scroll=new ScrollView(this);LinearLayout list=CampusUi.column(this);list.setPadding(dp(20),dp(8),dp(20),dp(16));JSONArray items=schedule.get(week+":"+selectedDay);if(items==null)items=new JSONArray();
         if(items.length()==0){TextView empty=label("今天没有课程\n留一点时间给自己",18,CampusUi.MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(50),0,dp(50));list.addView(empty);}
         JSONArray times=document.optJSONArray("periodTimes");for(int i=0;i<items.length();i++){JSONObject c=items.optJSONObject(i);LinearLayout card=CampusUi.column(this);card.setPadding(dp(18),dp(18),dp(18),dp(18));card.setBackground(CampusUi.ripple(this,Color.WHITE,22));String time="第"+c.optInt("startPeriod")+"–"+c.optInt("endPeriod")+"节";if(times!=null&&times.length()>=c.optInt("endPeriod"))time+="  "+times.optJSONObject(c.optInt("startPeriod")-1).optString("start")+"–"+times.optJSONObject(c.optInt("endPeriod")-1).optString("end");card.addView(label(time,12,mint));TextView title=label(c.optString("name"),20,ink);title.setTypeface(null,Typeface.BOLD);title.setPadding(0,dp(9),0,dp(8));card.addView(title);card.addView(label(c.optString("room")+(c.optString("teacher").isEmpty()?"":" · "+c.optString("teacher")),13,CampusUi.MUTED));card.setOnClickListener(v->details(c));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(12);list.addView(card,p);}
-        timetableView=list;scroll.addView(list);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        timetableView=list;scroll.addView(list);WeekSwipeFrame stage=new WeekSwipeFrame();stage.addView(scroll);root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
+    }
+    /** Only claim horizontal gestures when the timetable fits; narrow screens retain horizontal scrolling. */
+    private final class WeekSwipeFrame extends FrameLayout {
+        private float startX,startY;private boolean tracking,swiping;
+        private final int slop=ViewConfiguration.get(TimetableScreen.this).getScaledTouchSlop();
+        WeekSwipeFrame(){super(TimetableScreen.this);}
+        @Override public boolean onInterceptTouchEvent(MotionEvent e){
+            int action=e.getActionMasked();
+            if(action==MotionEvent.ACTION_DOWN){startX=e.getX();startY=e.getY();swiping=false;tracking=!(timetableView instanceof Grid)||((Grid)timetableView).width<=getWidth();}
+            if(action==MotionEvent.ACTION_POINTER_DOWN||action==MotionEvent.ACTION_CANCEL)tracking=false;
+            if(action==MotionEvent.ACTION_MOVE&&tracking){float dx=Math.abs(e.getX()-startX),dy=Math.abs(e.getY()-startY);if(dy>slop&&dy>=dx)tracking=false;else if(dx>slop&&dx>dy*1.5f)swiping=true;}
+            return swiping;
+        }
+        @Override public boolean onTouchEvent(MotionEvent e){
+            if(e.getActionMasked()==MotionEvent.ACTION_POINTER_DOWN)tracking=false;
+            if(e.getActionMasked()==MotionEvent.ACTION_UP){float dx=e.getX()-startX,dy=e.getY()-startY;if(tracking&&swiping&&Math.abs(dx)>=dp(64)&&Math.abs(dx)>Math.abs(dy)*1.5f){int target=Math.max(1,Math.min(totalWeeks(),week+(dx<0?1:-1)));if(target!=week){week=target;render();weekTitle.announceForAccessibility("第"+week+"周");}}tracking=false;swiping=false;}
+            if(e.getActionMasked()==MotionEvent.ACTION_CANCEL){tracking=false;swiping=false;}
+            return true;
+        }
     }
     private void settings(){
         LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);form.setPadding(dp(24),dp(12),dp(24),0);
