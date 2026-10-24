@@ -1,6 +1,6 @@
-# 下一版许可迁移发布准备
+# 0.6.11 许可迁移发布说明
 
-当前准备基于 `v0.6.10` / `9ccebef289041b057cdc079ab0e3fa7c326a657c`。正式版本号与日期由维护者发版时确定。若其间没有其他正式版本，可考虑 `0.6.11` / `versionCode 17`；本文件不代替 AndroidManifest.xml 的实际值。
+本次版本为 `0.6.11` / `versionCode 17`，发布日期为 2026-10-24（Asia/Shanghai）。原 MIT 版本基准为 `v0.6.10` / `9ccebef289041b057cdc079ab0e3fa7c326a657c`；许可迁移提交为 `1c17e46f771bbb8db8e8d83cd9ff3c2774688089`，经 PR #14 合并。实际版本号以 AndroidManifest.xml 为准。
 
 ## 发布前核对
 

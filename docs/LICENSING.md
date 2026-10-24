@@ -4,7 +4,7 @@
 
 「心心相应」采用源码可用模式。自本次许可迁移提交起，由维护者有权按这些条款发布的新增作品及后续修改，按根目录 [LICENSE](../LICENSE) 中未经修改的 PolyForm Noncommercial License 1.0.0 提供；商业授权由相应权利人另行书面授予。本说明不修改标准许可正文。
 
-最后一个已核实的 MIT 正式版本为 [v0.6.10](https://github.com/YukikazeKaede/xinxinxiangying/releases/tag/v0.6.10)，提交为 `9ccebef289041b057cdc079ab0e3fa7c326a657c`。首次采用新许可的正式版本，由维护者发版时确定；本次准备不修改 AndroidManifest.xml 的版本号。
+最后一个已核实的 MIT 正式版本为 [v0.6.10](https://github.com/YukikazeKaede/xinxinxiangying/releases/tag/v0.6.10)，提交为 `9ccebef289041b057cdc079ab0e3fa7c326a657c`。首次采用新许可的正式版本为 `0.6.11` / `versionCode 17`，许可迁移提交为 `1c17e46f771bbb8db8e8d83cd9ff3c2774688089`；发布说明与核对事项见 [RELEASE-LICENSING.md](RELEASE-LICENSING.md)。
 
 该版本以及迁移前已合法按 MIT 发布的其他代码（包括未打 tag 的提交与其他分支），继续享有原 MIT 授权。完整历史声明保留在 [LICENSE-MIT-LEGACY](../LICENSE-MIT-LEGACY)。新许可不追溯撤销这些授权，不能阻止他人从旧版本提取代码继续商用。旧版中已有的代码即使出现在新版中，也不会因此丧失原有 MIT 权利。
 

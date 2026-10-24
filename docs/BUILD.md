@@ -7,7 +7,7 @@
 3. `javac` 编译 Java 源码；
 4. `d8` 生成 `classes.dex`；
 5. .NET `ZipArchive` 把 dex 追加到 APK；
-6. 自定义对齐逻辑 + `zipalign -c 4`；
+6. 自定义对齐逻辑规范化 Windows aapt2 生成的嵌套 assets 路径，并执行 `zipalign -c 4`；
 7. `apksigner` 签名并校验。
 
 ## 依赖
@@ -67,4 +67,5 @@ keytool -genkeypair -keystore my-release.p12 -storetype PKCS12 `
 
 - **Android 14 安装报 `-124 ... resources.arsc ...`**：构建链必须由 `aapt2 link -o` 直接产出 APK，不能用 .NET 重新打包资源；当前脚本已按此实现。
 - **Windows PowerShell 5.1 中文文件名乱码**：脚本用 Unicode 码点拼出输出文件名，保持 ASCII 源码。修改时不要直接写中文文件名。
+- **嵌套 assets 无法读取**：部分 Windows aapt2 会在 APK 内写入反斜杠。对齐步骤将 assets 路径的本地头与中央目录同步改为 `/`，保留文件内容、CRC、压缩方式及资源表的 stored 状态；`assets/licenses/` 下的许可文件可按标准路径读取。
 - **签名失败**：确认 `XINXIN_KEYSTORE_PASSWORD` 与 `-KeyAlias` 正确；私钥不要放在会被提交的目录。
