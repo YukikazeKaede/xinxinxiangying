@@ -96,4 +96,8 @@ update.json.example      更新清单模板
 
 ## 许可证
 
-[MIT](LICENSE)。本项目不包含学校官方素材、原版应用代码或反编译产物。
+自本次许可迁移提交起，有权按新条款发布的新增作品及后续修改采用 [PolyForm Noncommercial 1.0.0](LICENSE)，属于源码可用模式。许可范围与商业授权流程见 [docs/LICENSING.md](docs/LICENSING.md)；超出标准许可范围的商业使用须另行取得书面授权。
+
+已按 MIT 发布的代码保留原授权，包括 `v0.6.10`（`9ccebef289041b057cdc079ab0e3fa7c326a657c`）及迁移前其他 MIT 代码；原文见 [LICENSE-MIT-LEGACY](LICENSE-MIT-LEGACY)。这不构成全部新版代码可任选 MIT 的授权。第三方内容继续遵循其各自许可。
+
+后续原创贡献需明确同意 [CLA v1.0](docs/CLA.md)，以便维护者提供独立商业授权。下一版公告与发布核对见 [docs/RELEASE-LICENSING.md](docs/RELEASE-LICENSING.md)。本项目不包含学校官方素材、原版应用代码或反编译产物。
