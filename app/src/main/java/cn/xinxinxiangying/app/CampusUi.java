@@ -63,8 +63,10 @@ public final class CampusUi {
             else if(kind.equals("settings")){c.drawCircle(12,12,7,p);c.drawCircle(12,12,2.5f,p);for(int i=0;i<8;i++){double a=i*Math.PI/4;line(c,12+(float)Math.cos(a)*7,12+(float)Math.sin(a)*7,12+(float)Math.cos(a)*10,12+(float)Math.sin(a)*10);}}
             else if(kind.equals("heart")){Path path=new Path();path.moveTo(12,21);path.cubicTo(8,17,2,13,2,8);path.cubicTo(2,2,9,1,12,6);path.cubicTo(15,1,22,2,22,8);path.cubicTo(22,13,16,17,12,21);c.drawPath(path,p);}
             else if(kind.equals("gpa")){line(c,4,21,21,21);line(c,6,17,6,12);line(c,12,17,12,8);line(c,18,17,18,3);}
+            else if(kind.equals("second")){c.drawCircle(12,9,5.2f,p);Path path=new Path();path.moveTo(8,13);path.lineTo(6,22);path.lineTo(12,19);path.lineTo(18,22);path.lineTo(16,13);c.drawPath(path,p);}
             else if(kind.equals("grades")||kind.equals("saved")){c.drawRoundRect(5,3,20,22,2,2,p);line(c,9,8,16,8);line(c,9,12,16,12);line(c,9,16,13,16);}
             else if(kind.equals("more")){for(int i=0;i<3;i++)c.drawCircle(5+i*7,12,.8f,p);}
+            else if(kind.equals("search")){c.drawCircle(10,10,6,p);line(c,14.5f,14.5f,20,20);}
             else{c.drawRoundRect(3,5,21,22,3,3,p);line(c,3,10,21,10);line(c,8,2,8,7);line(c,16,2,16,7);if(kind.equals("exams")){line(c,8,16,11,19);line(c,11,19,17,13);}else{line(c,8,15,10,15);line(c,14,15,16,15);line(c,8,19,10,19);}}
             c.restore();
         }

@@ -75,6 +75,9 @@ public final class MainActivity extends Activity {
         LinearLayout info=CampusUi.column(this);TextView school=text("我的校园",18,teal);school.setTypeface(null,Typeface.BOLD);info.addView(school);TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(0,dp(4),0,0);info.addView(student);identity.addView(info,new LinearLayout.LayoutParams(0,-2,1));Button change=CampusUi.button(this,"切换身份",false,v->selectProfile());identity.addView(change,new LinearLayout.LayoutParams(-2,dp(44)));gap(14);
         LinearLayout services=panel(12);
         serviceGrid(services,new String[]{"exams","gpa"},new String[]{"考试安排","学分绩点"},new int[]{0xff5986cf,0xffec956a});gap(18);
+        LinearLayout dekt=panel(12);section(dekt,"第二课堂");
+        dekt.addView(row("second","学分情况","累计学分与德育、劳育、美育、健康教育明细",v->startActivity(new Intent(this,DektActivity.class))));divider(dekt);
+        dekt.addView(row("calendar","活动报名","活动列表、筛选与报名",v->startActivity(new Intent(this,ActivitiesActivity.class))));gap(16);
         LinearLayout life=panel(12);section(life,"生活助手");serviceGrid(life,new String[]{"card","code","electricity"},new String[]{"校园卡","校园付款码","宿舍电费"},new int[]{0xff458ec7,0xffd5a34e,0xff62a481});gap(16);
         gap(20);TextView note=text("校园服务由学校系统提供",11,muted);note.setGravity(Gravity.CENTER);content.addView(note);
     }
@@ -122,6 +125,7 @@ public final class MainActivity extends Activity {
     private boolean isPostgraduate() { return prefs.getBoolean("postgraduate",false); }
     private void openService(String id) {
         if("timetable".equals(id)) { selectTab(0); return; }
+        if("second".equals(id)) { startActivity(new Intent(this,DektActivity.class)); return; }
         // 考试、成绩、绩点使用与课表相同的学校登录流程，读到数据后在本机列表里查看。
         if(SchoolCatalog.isAcademic(id)) { startActivity(new Intent(this,AcademicActivity.class).putExtra("service",id).putExtra("postgraduate",isPostgraduate())); return; }
         Intent intent=new Intent(this,SchoolWebActivity.class); intent.putExtra("service",id); intent.putExtra("postgraduate",isPostgraduate()); startActivity(intent);
@@ -149,6 +153,8 @@ public final class MainActivity extends Activity {
                     android.webkit.CookieManager.getInstance().flush(); android.webkit.WebStorage.getInstance().deleteAllData();
                     android.webkit.WebView temp=new android.webkit.WebView(this); temp.clearCache(true); temp.clearFormData(); temp.destroy();
                     getSharedPreferences("academic_snapshots",MODE_PRIVATE).edit().clear().commit();
+                    getSharedPreferences("dekt_v1",MODE_PRIVATE).edit().clear().commit();
+                    getSharedPreferences("activities_v1",MODE_PRIVATE).edit().clear().commit();
                     getSharedPreferences("xinxin_local_v1",MODE_PRIVATE).edit().clear().commit();
                     getSharedPreferences("timetables_v1",MODE_PRIVATE).edit().clear().commit();
                     LocalProfile.clear(this);new SchoolAccount(this).clear();((android.app.NotificationManager)getSystemService(NOTIFICATION_SERVICE)).cancel(77);getSharedPreferences("school_session",0).edit().clear().commit();TimetableWidget.update(this);CourseReminder.schedule(this);

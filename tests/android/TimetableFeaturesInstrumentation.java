@@ -65,11 +65,11 @@ public final class TimetableFeaturesInstrumentation extends Instrumentation {
             runOnMainSync(()->main.selectTab(0));waitForIdleSync();check(shell==get(main,"shell")&&screen==get(main,"timetable")&&pages.getChildAt(0)==timetablePage,"all tabs retain one host and same timetable view");check(chosenWeek.equals(get(screen,"week")),"tab switching preserves week");
             runOnMainSync(()->main.selectTab(1));waitForIdleSync();check(pages.getChildAt(0)==toolsPage,"tools view retained across tab switches");runOnMainSync(()->main.selectTab(0));screenshot(main,"v06-timetable.png");
             check(AppSession.valid(getTargetContext()),"school response grants process session");
-            AppSession.invalidate();check(!AppSession.valid(getTargetContext()),"session invalidates immediately");
+            AppSession.invalidate(getTargetContext());check(!AppSession.valid(getTargetContext()),"session invalidates immediately");
             ActivityMonitor gateMonitor=addMonitor(SchoolLoginActivity.class.getName(),null,false);runOnMainSync(()->main.selectTab(1));Activity locked=waitForMonitorWithTimeout(gateMonitor,3000);removeMonitor(gateMonitor);check(locked instanceof SchoolLoginActivity,"unauthenticated tab access returns to login");activities.add(locked);waitForIdleSync();SystemClock.sleep(500);check(find(getUiAutomation().getRootInActiveWindow(),"学校账号登录")!=null,"mandatory login shown");check(find(getUiAutomation().getRootInActiveWindow(),"返回")==null,"locked login has no skip button");screenshot(locked,"v06-required-login.png");
             result.putString("result","PASS "+checks+" school-login/session/navigation/timetable checks");
         }catch(Throwable e){result.putString("ui",uiText(getUiAutomation().getRootInActiveWindow()));result.putString("failure",e.toString());result.putString("stack",android.util.Log.getStackTraceString(e));}
-        finally{AppSession.invalidate();runOnMainSync(()->{for(Activity activity:activities)if(activity!=null&&!activity.isFinishing())activity.finish();});for(String store:stores)restore(getTargetContext().getSharedPreferences(store,0),original.get(store));CourseReminder.schedule(getTargetContext());TimetableWidget.update(getTargetContext());}
+        finally{AppSession.invalidate(getTargetContext());runOnMainSync(()->{for(Activity activity:activities)if(activity!=null&&!activity.isFinishing())activity.finish();});for(String store:stores)restore(getTargetContext().getSharedPreferences(store,0),original.get(store));CourseReminder.schedule(getTargetContext());TimetableWidget.update(getTargetContext());}
         finish(result.containsKey("failure")?Activity.RESULT_CANCELED:Activity.RESULT_OK,result);
     }
 }

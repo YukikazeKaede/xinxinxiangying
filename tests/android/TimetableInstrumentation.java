@@ -119,7 +119,7 @@ public final class TimetableInstrumentation extends Instrumentation {
             result.putString("result","PASS "+checks+" Android repository/WebView/preview/import checks");
         } catch(Throwable e){result.putString("failure",e.toString());result.putString("stack",android.util.Log.getStackTraceString(e));result.putString("ui",uiText(getUiAutomation().getRootInActiveWindow()));}
         finally {
-            AppSession.invalidate();runOnMainSync(()->{for(Activity activity:activities)if(!activity.isFinishing())activity.finish();});
+            AppSession.invalidate(getTargetContext());runOnMainSync(()->{for(Activity activity:activities)if(!activity.isFinishing())activity.finish();});
             SharedPreferences.Editor restore=storage.edit().clear();for(Map.Entry<String,?> entry:original.entrySet())if(entry.getValue() instanceof String)restore.putString(entry.getKey(),(String)entry.getValue());restore.commit();
             profile.edit().putBoolean("postgraduate",originalType).commit();
             restore(accounts,originalAccounts);restore(sessions,originalSessions);CourseReminder.schedule(getTargetContext());TimetableWidget.update(getTargetContext());
