@@ -1,6 +1,7 @@
 package cn.xinxinxiangying.app;
 
 import android.app.*;
+import android.animation.*;
 import android.content.Intent;
 import android.graphics.*;
 import android.graphics.drawable.GradientDrawable;
@@ -18,6 +19,7 @@ public final class TimetableScreen extends android.content.ContextWrapper {
     private TimetableRepository repository;
     private TimetableTools tools;
     private View timetableView;
+    private WeekSwipeFrame weekPager;
     private TextView liveStatus;private final android.os.Handler statusHandler=new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable statusTick=new Runnable(){public void run(){updateStatus();statusHandler.postDelayed(this,30000);}};
     private int visibleDayCount=7;
@@ -36,7 +38,7 @@ public final class TimetableScreen extends android.content.ContextWrapper {
         if(state!=null){week=state.getInt("week",1);selectedDay=state.getInt("day",selectedDay);initialized=true;}
     }
     public void resume(){reload();statusHandler.removeCallbacks(statusTick);statusHandler.post(statusTick);}
-    public void pause(){statusHandler.removeCallbacks(statusTick);}
+    public void pause(){statusHandler.removeCallbacks(statusTick);if(weekPager!=null)weekPager.cancelMotion();}
     public void saveState(Bundle state){state.putInt("week",week);state.putInt("day",selectedDay);}
     public void showSettings(){menu();}
     private void reload(){
@@ -59,24 +61,28 @@ public final class TimetableScreen extends android.content.ContextWrapper {
         while(start.before(today)&&days<420){start.add(Calendar.DATE,1);days++;}
         return Math.min(totalWeeks(),days/7+1);
     }
-    private void render(){
+    private JSONArray weekCourses(Map<String,JSONArray> schedule,int target){JSONArray visible=new JSONArray();for(int day=1;day<=7;day++){JSONArray items=schedule.get(target+":"+day);if(items!=null)for(int i=0;i<items.length();i++)visible.put(items.optJSONObject(i));}return visible;}
+    private int visibleDays(JSONArray courses){int days=document.optInt("visibleDays",7);if(document.optBoolean("smartWeekend",false)){days=5;for(int i=0;i<courses.length();i++){JSONObject c=courses.optJSONObject(i);if(c!=null)days=Math.max(days,c.optInt("displayDay",5));}}return days;}
+    private void flipWeek(int direction){int target=Math.max(1,Math.min(totalWeeks(),week+direction));if(weekPager!=null&&weekPager.grid!=null)weekPager.settleTo(target);else if(target!=week){week=target;render();}}
+    private void render(){render(0);}
+    private void render(int scrollY){
+        if(weekPager!=null)weekPager.cancelMotion();
         root=CampusUi.column(this);root.setBackgroundColor(pale);
         JSONArray courses=document.optJSONArray("courses");boolean hasCourses=courses!=null&&courses.length()>0;
-        Map<String,JSONArray> schedule=TimetableModel.schedule(document);JSONArray visibleCourses=new JSONArray();for(int day=1;day<=7;day++){JSONArray items=schedule.get(week+":"+day);if(items!=null)for(int i=0;i<items.length();i++)visibleCourses.put(items.optJSONObject(i));}
-        visibleDayCount=document.optInt("visibleDays",7);if(document.optBoolean("smartWeekend",false)){visibleDayCount=5;for(int i=0;i<visibleCourses.length();i++){JSONObject c=visibleCourses.optJSONObject(i);if(c!=null)visibleDayCount=Math.max(visibleDayCount,c.optInt("displayDay",5));}}
+        Map<String,JSONArray> schedule=TimetableModel.schedule(document);JSONArray visibleCourses=weekCourses(schedule,week);
+        visibleDayCount=visibleDays(visibleCourses);
         LinearLayout header=CampusUi.column(this);header.setBackground(CampusUi.wash(false));
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(14),dp(10),dp(12),dp(4));
         LinearLayout settings=new LinearLayout(this);settings.setGravity(Gravity.CENTER);settings.setBackground(CampusUi.ripple(this,Color.TRANSPARENT,8));settings.addView(new CampusUi.Icon(this,"settings",ink),new LinearLayout.LayoutParams(dp(21),dp(21)));settings.setContentDescription("课表设置");settings.setFocusable(true);settings.setOnClickListener(v->menu());top.addView(settings,new LinearLayout.LayoutParams(dp(44),dp(44)));
         weekTitle=label("第 "+week+" 周 ⌄",17,ink);weekTitle.setGravity(Gravity.CENTER_VERTICAL);weekTitle.setOnClickListener(v->chooseWeek());weekTitle.setContentDescription("第"+week+"周，点击切换教学周");weekTitle.setFocusable(true);top.addView(weekTitle,new LinearLayout.LayoutParams(0,dp(44),1));
-        Button previous=button("‹",v->{week=Math.max(1,week-1);render();});previous.setTextSize(23);previous.setContentDescription("上一周");previous.setEnabled(week>1);top.addView(previous,new LinearLayout.LayoutParams(dp(44),dp(44)));
-        Button next=button("›",v->{week=Math.min(totalWeeks(),week+1);render();});next.setTextSize(23);next.setContentDescription("下一周");next.setEnabled(week<totalWeeks());LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(dp(44),dp(44));np.leftMargin=dp(6);top.addView(next,np);header.addView(top);
+        Button previous=button("‹",v->flipWeek(-1));previous.setTextSize(23);previous.setContentDescription("上一周");previous.setEnabled(week>1);top.addView(previous,new LinearLayout.LayoutParams(dp(44),dp(44)));
+        Button next=button("›",v->flipWeek(1));next.setTextSize(23);next.setContentDescription("下一周");next.setEnabled(week<totalWeeks());LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(dp(44),dp(44));np.leftMargin=dp(6);top.addView(next,np);header.addView(top);
         LinearLayout meta=new LinearLayout(this);meta.setGravity(Gravity.CENTER_VERTICAL);meta.setPadding(dp(22),0,dp(16),dp(9));
         semesterTitle=label(hasCourses?document.optString("semester","我的课表"):"我的课表",12,CampusUi.MUTED);semesterTitle.setOnClickListener(v->tools.semesters());semesterTitle.setContentDescription("切换学期");semesterTitle.setGravity(Gravity.CENTER_VERTICAL);meta.addView(semesterTitle,new LinearLayout.LayoutParams(0,dp(40),1));
         boolean daily="daily".equals(document.optString("viewMode"));Button mode=button(daily?"周课表":"每日安排",v->setViewMode(daily?"weekly":"daily"));mode.setTextSize(12);mode.setGravity(Gravity.CENTER);mode.setPadding(dp(10),0,dp(10),0);mode.setBackground(CampusUi.ripple(this,0x88ffffff,8));mode.setOnClickListener(v->setViewMode(daily?"weekly":"daily"));meta.addView(mode,new LinearLayout.LayoutParams(-2,dp(40)));header.addView(meta);root.addView(header);
-        FrameLayout stage=new WeekSwipeFrame();stage.setBackgroundColor(Color.WHITE);
         if(daily){renderDaily(schedule);}else{
             ScrollView vertical=new ScrollView(this);vertical.setFillViewport(true);vertical.setVerticalScrollBarEnabled(false);HorizontalScrollView horizontal=new HorizontalScrollView(this);horizontal.setFillViewport(true);horizontal.setHorizontalScrollBarEnabled(false);
-            int screen=getResources().getDisplayMetrics().widthPixels;int width=Math.max(screen,dp(56+visibleDayCount*44));Grid grid=new Grid(visibleCourses,width);timetableView=grid;horizontal.addView(grid,new HorizontalScrollView.LayoutParams(width,grid.height));vertical.addView(horizontal,new ScrollView.LayoutParams(-1,-2));stage.addView(vertical,new FrameLayout.LayoutParams(-1,-1));
+            int width=dp(56+visibleDayCount*44);Grid grid=new Grid(visibleCourses,width,week,visibleDayCount,loadWallpaper());timetableView=grid;horizontal.addView(grid,new HorizontalScrollView.LayoutParams(width,grid.height));vertical.addView(horizontal,new ScrollView.LayoutParams(-1,-2));WeekSwipeFrame stage=new WeekSwipeFrame(vertical,grid,schedule,scrollY);weekPager=stage;
             if(!hasCourses){LinearLayout invitation=CampusUi.column(this);invitation.setPadding(dp(16),dp(12),dp(16),dp(12));invitation.setBackground(CampusUi.shape(this,CampusUi.APRICOT,12));TextView notice=label("还没有课表，登录学校账号后自动同步",12,0xff906518);notice.setGravity(Gravity.CENTER);invitation.addView(notice);Button sync=CampusUi.button(this,"登录并同步课表",true,v->startImport());LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,dp(44));bp.topMargin=dp(10);invitation.addView(sync,bp);Button local=button("手动添加课程 / 管理学期",v->tools.semesters());LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(44));lp.topMargin=dp(6);invitation.addView(local,lp);FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM);ip.setMargins(dp(30),0,dp(30),dp(22));stage.addView(invitation,ip);}
             else {Button sync=CampusUi.button(this,"更新课表",true,v->startImport());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(-2,dp(44),Gravity.BOTTOM|Gravity.RIGHT);fp.setMargins(0,0,dp(16),dp(15));stage.addView(sync,fp);}
             root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
@@ -95,24 +101,72 @@ public final class TimetableScreen extends android.content.ContextWrapper {
         ScrollView scroll=new ScrollView(this);LinearLayout list=CampusUi.column(this);list.setPadding(dp(20),dp(8),dp(20),dp(16));JSONArray items=schedule.get(week+":"+selectedDay);if(items==null)items=new JSONArray();
         if(items.length()==0){TextView empty=label("今天没有课程\n留一点时间给自己",18,CampusUi.MUTED);empty.setGravity(Gravity.CENTER);empty.setPadding(0,dp(50),0,dp(50));list.addView(empty);}
         JSONArray times=document.optJSONArray("periodTimes");for(int i=0;i<items.length();i++){JSONObject c=items.optJSONObject(i);LinearLayout card=CampusUi.column(this);card.setPadding(dp(18),dp(18),dp(18),dp(18));card.setBackground(CampusUi.ripple(this,Color.WHITE,22));String time="第"+c.optInt("startPeriod")+"–"+c.optInt("endPeriod")+"节";if(times!=null&&times.length()>=c.optInt("endPeriod"))time+="  "+times.optJSONObject(c.optInt("startPeriod")-1).optString("start")+"–"+times.optJSONObject(c.optInt("endPeriod")-1).optString("end");card.addView(label(time,12,mint));TextView title=label(c.optString("name"),20,ink);title.setTypeface(null,Typeface.BOLD);title.setPadding(0,dp(9),0,dp(8));card.addView(title);card.addView(label(c.optString("room")+(c.optString("teacher").isEmpty()?"":" · "+c.optString("teacher")),13,CampusUi.MUTED));card.setOnClickListener(v->details(c));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(12);list.addView(card,p);}
-        timetableView=list;scroll.addView(list);WeekSwipeFrame stage=new WeekSwipeFrame();stage.addView(scroll);root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
+        timetableView=list;scroll.addView(list);WeekSwipeFrame stage=new WeekSwipeFrame(scroll,null,null,0);weekPager=stage;root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));
     }
-    /** Only claim horizontal gestures when the timetable fits; narrow screens retain horizontal scrolling. */
+    /** Native adjacent pages track the finger; only the selected week changes after settling. */
     private final class WeekSwipeFrame extends FrameLayout {
-        private float startX,startY;private boolean tracking,swiping;
-        private final int slop=ViewConfiguration.get(TimetableScreen.this).getScaledTouchSlop();
-        WeekSwipeFrame(){super(TimetableScreen.this);}
+        private final ScrollView page;private final Grid grid;private final Map<String,JSONArray> schedule;
+        private ScrollView preview;private Grid previewGrid;private int previewWeek,initialScrollY;
+        private float startX,startY,offset,lastDelta;private boolean tracking,swiping;
+        private VelocityTracker velocity;private ValueAnimator settleAnimator;
+        private final ViewConfiguration config=ViewConfiguration.get(TimetableScreen.this);
+        private final int slop=config.getScaledTouchSlop();
+        WeekSwipeFrame(ScrollView page,Grid grid,Map<String,JSONArray> schedule,int scrollY){super(TimetableScreen.this);this.page=page;this.grid=grid;this.schedule=schedule;initialScrollY=scrollY;setBackgroundColor(Color.WHITE);setClipChildren(true);addView(page,new FrameLayout.LayoutParams(-1,-1));}
+        private void measureGrid(Grid item,int width){if(item!=null){int size=Math.max(width,dp(56+item.dayCount*44));if(item.width!=size){item.width=size;item.column=(size-item.left)/item.dayCount;item.getLayoutParams().width=size;}}}
+        @Override protected void onMeasure(int widthSpec,int heightSpec){
+            measureGrid(grid,MeasureSpec.getSize(widthSpec));measureGrid(previewGrid,MeasureSpec.getSize(widthSpec));
+            super.onMeasure(widthSpec,heightSpec);
+        }
+        @Override protected void onLayout(boolean changed,int l,int t,int r,int b){super.onLayout(changed,l,t,r,b);if(initialScrollY>=0){page.scrollTo(0,initialScrollY);initialScrollY=-1;}}
+        @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);if(oldw>0&&w!=oldw)cancelMotion();}
+        @Override protected void onDetachedFromWindow(){cancelMotion();recycleVelocity();super.onDetachedFromWindow();}
+        private void recycleVelocity(){if(velocity!=null){velocity.recycle();velocity=null;}}
+        @Override public boolean dispatchTouchEvent(MotionEvent e){int action=e.getActionMasked();if(action==MotionEvent.ACTION_DOWN){recycleVelocity();velocity=VelocityTracker.obtain();}if(velocity!=null)velocity.addMovement(e);boolean handled=super.dispatchTouchEvent(e);if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL)recycleVelocity();return handled;}
+        private void stopSettle(){if(settleAnimator!=null){settleAnimator.removeAllUpdateListeners();settleAnimator.removeAllListeners();settleAnimator.cancel();settleAnimator=null;}}
+        private void clearPreview(){if(preview!=null)removeView(preview);preview=null;previewGrid=null;previewWeek=0;}
+        private void cancelMotion(){stopSettle();recycleVelocity();tracking=false;swiping=false;offset=0;page.setTranslationX(0);clearPreview();}
+        private boolean preparePreview(int target){
+            if(target<1||target>totalWeeks()||target==week||grid==null)return false;
+            if(preview!=null&&previewWeek==target)return true;clearPreview();
+            JSONArray courses=weekCourses(schedule,target);int days=visibleDays(courses);previewGrid=new Grid(courses,Math.max(getWidth(),dp(56+days*44)),target,days,grid.wallpaper);
+            HorizontalScrollView horizontal=new HorizontalScrollView(TimetableScreen.this);horizontal.setFillViewport(true);horizontal.setHorizontalScrollBarEnabled(false);horizontal.addView(previewGrid,new HorizontalScrollView.LayoutParams(previewGrid.width,previewGrid.height));
+            preview=new ScrollView(TimetableScreen.this);preview.setFillViewport(true);preview.setVerticalScrollBarEnabled(false);preview.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);preview.addView(horizontal,new ScrollView.LayoutParams(-1,-2));previewWeek=target;
+            addView(preview,1,new FrameLayout.LayoutParams(-1,-1));preview.measure(MeasureSpec.makeMeasureSpec(getWidth(),MeasureSpec.EXACTLY),MeasureSpec.makeMeasureSpec(getHeight(),MeasureSpec.EXACTLY));preview.layout(0,0,getWidth(),getHeight());preview.scrollTo(0,page.getScrollY());return true;
+        }
+        private void translate(float value){offset=value;page.setTranslationX(value);if(preview!=null)preview.setTranslationX(value+(previewWeek>week?getWidth():-getWidth()));}
+        private void drag(float delta){if(grid==null)return;float value=Math.max(-getWidth(),Math.min(getWidth(),delta));if(Math.abs(value)<.5f){translate(0);clearPreview();return;}if(!preparePreview(week+(value<0?1:-1))){clearPreview();value*=.28f;}translate(value);}
+        private void settleTo(int target){
+            stopSettle();target=Math.max(1,Math.min(totalWeeks(),target));
+            if(grid==null||getWidth()==0){if(target!=week){week=target;render();}return;}
+            if(target!=week){preparePreview(target);translate(offset);}
+            final int selected=target;float end=target==week?0:(target>week?-getWidth():getWidth());
+            ValueAnimator animator=ValueAnimator.ofFloat(offset,end);settleAnimator=animator;animator.setDuration(120+Math.round(160*Math.min(1,Math.abs(end-offset)/getWidth())));animator.setInterpolator(new android.view.animation.DecelerateInterpolator(1.5f));
+            animator.addUpdateListener(a->translate((Float)a.getAnimatedValue()));
+            animator.addListener(new AnimatorListenerAdapter(){@Override public void onAnimationEnd(Animator animation){if(settleAnimator!=animation)return;settleAnimator=null;tracking=false;swiping=false;if(selected!=week){int scrollY=page.getScrollY();week=selected;render(scrollY);weekTitle.announceForAccessibility("第"+week+"周");}else{translate(0);clearPreview();}}});animator.start();
+        }
+        private void release(boolean cancelled){
+            if(grid==null){if(!cancelled&&tracking&&Math.abs(lastDelta)>=dp(64)){int target=Math.max(1,Math.min(totalWeeks(),week+(lastDelta<0?1:-1)));if(target!=week){week=target;render();}}tracking=false;swiping=false;return;}
+            float speed=0;if(velocity!=null){velocity.computeCurrentVelocity(1000,config.getScaledMaximumFlingVelocity());speed=velocity.getXVelocity();}
+            boolean far=Math.abs(offset)>=Math.min(getWidth()*.25f,dp(80));boolean fling=Math.abs(offset)>=dp(24)&&Math.abs(speed)>=Math.max(config.getScaledMinimumFlingVelocity(),dp(600))&&speed*offset>0;
+            int target=!cancelled&&tracking&&(far||fling)?Math.max(1,Math.min(totalWeeks(),week+(offset<0?1:-1))):week;settleTo(target);
+        }
+        private boolean canChangeWeek(float dx){
+            if(grid==null)return true;HorizontalScrollView scroll=(HorizontalScrollView)grid.getParent();
+            return grid.getWidth()-scroll.getWidth()<=slop||!scroll.canScrollHorizontally(dx<0?1:-1);
+        }
         @Override public boolean onInterceptTouchEvent(MotionEvent e){
             int action=e.getActionMasked();
-            if(action==MotionEvent.ACTION_DOWN){startX=e.getX();startY=e.getY();swiping=false;tracking=!(timetableView instanceof Grid)||((Grid)timetableView).width<=getWidth();}
+            if(action==MotionEvent.ACTION_DOWN){stopSettle();startX=e.getX()-offset;startY=e.getY();lastDelta=offset;swiping=Math.abs(offset)>.5f;tracking=true;}
             if(action==MotionEvent.ACTION_POINTER_DOWN||action==MotionEvent.ACTION_CANCEL)tracking=false;
-            if(action==MotionEvent.ACTION_MOVE&&tracking){float dx=Math.abs(e.getX()-startX),dy=Math.abs(e.getY()-startY);if(dy>slop&&dy>=dx)tracking=false;else if(dx>slop&&dx>dy*1.5f)swiping=true;}
+            if(action==MotionEvent.ACTION_MOVE&&tracking&&!swiping){float delta=e.getX()-startX,dx=Math.abs(delta),dy=Math.abs(e.getY()-startY);if(dy>slop&&dy>=dx)tracking=false;else if(dx>slop&&dx>dy*1.5f){if(canChangeWeek(delta)){swiping=true;if(grid!=null){grid.pendingDay=-1;grid.pendingPeriod=-1;grid.invalidate();}getParent().requestDisallowInterceptTouchEvent(true);drag(delta);}else tracking=false;}}
             return swiping;
         }
         @Override public boolean onTouchEvent(MotionEvent e){
-            if(e.getActionMasked()==MotionEvent.ACTION_POINTER_DOWN)tracking=false;
-            if(e.getActionMasked()==MotionEvent.ACTION_UP){float dx=e.getX()-startX,dy=e.getY()-startY;if(tracking&&swiping&&Math.abs(dx)>=dp(64)&&Math.abs(dx)>Math.abs(dy)*1.5f){int target=Math.max(1,Math.min(totalWeeks(),week+(dx<0?1:-1)));if(target!=week){week=target;render();weekTitle.announceForAccessibility("第"+week+"周");}}tracking=false;swiping=false;}
-            if(e.getActionMasked()==MotionEvent.ACTION_CANCEL){tracking=false;swiping=false;}
+            int action=e.getActionMasked();lastDelta=e.getX()-startX;
+            if(action==MotionEvent.ACTION_MOVE&&tracking&&swiping)drag(lastDelta);
+            if(action==MotionEvent.ACTION_POINTER_DOWN){tracking=false;if(swiping)release(true);}
+            if(action==MotionEvent.ACTION_UP&&swiping){if(tracking||settleAnimator==null)release(!tracking);}
+            if(action==MotionEvent.ACTION_CANCEL){tracking=false;release(true);}
             return true;
         }
     }
@@ -133,7 +187,7 @@ public final class TimetableScreen extends android.content.ContextWrapper {
     private Bitmap loadWallpaper(){try{String path=document.optString("wallpaper","");if(path.isEmpty())return null;android.net.Uri uri=android.net.Uri.parse(path);if(!"content".equals(uri.getScheme()))return null;BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;try(java.io.InputStream in=getContentResolver().openInputStream(uri)){BitmapFactory.decodeStream(in,null,options);}options.inSampleSize=1;while(options.outWidth/options.inSampleSize>1600||options.outHeight/options.inSampleSize>1600)options.inSampleSize*=2;options.inJustDecodeBounds=false;try(java.io.InputStream in=getContentResolver().openInputStream(uri)){return BitmapFactory.decodeStream(in,null,options);}}catch(Exception e){return null;}}
     private final class Block {int day,start,end;ArrayList<JSONObject> courses=new ArrayList<>();RectF bounds;}
     private final class Grid extends View {
-        final ArrayList<Block> blocks=new ArrayList<>();final Paint paint=new Paint(3);final int width,height,rows;final float left=dp(56),header=dp(54),row=dp(59),column;final int dayCount;final Bitmap wallpaper;final float gapNoon=dp(20),gapDusk=dp(20);
+        final ArrayList<Block> blocks=new ArrayList<>();final Paint paint=new Paint(3);int width;final int height,rows;final float left=dp(56),header=dp(54),row=dp(59);float column;final int dayCount,pageWeek;final Bitmap wallpaper;final float gapNoon=dp(20),gapDusk=dp(20);
         int pendingDay=-1,pendingPeriod=-1;
         /** Top y of a period row, adding noon (after 4) and dusk (after 8) divider gaps. */
         private float yOf(int period){return header+(period-1)*row+(period>4?gapNoon:0)+(period>8?gapDusk:0);}
@@ -143,17 +197,17 @@ public final class TimetableScreen extends android.content.ContextWrapper {
             0xffd8e0f0,0xfff0e0c0,0xffb8e0d0,0xffe8c0d0,0xffc8e8d0,0xffc0d8e8
         };
         final java.util.LinkedHashMap<String,Integer> colorMap=new java.util.LinkedHashMap<>();
-        Grid(JSONArray courses,int width){super(TimetableScreen.this);this.width=width;dayCount=visibleDayCount;column=(width-left)/(float)dayCount;wallpaper=loadWallpaper();int maximum=1;
+        Grid(JSONArray courses,int width,int pageWeek,int dayCount,Bitmap wallpaper){super(TimetableScreen.this);this.width=width;this.pageWeek=pageWeek;this.dayCount=dayCount;column=(width-left)/(float)dayCount;this.wallpaper=wallpaper;int maximum=1;
             if("blue".equals(document.optString("palette"))){int[] blues={0xffcfe8ff,0xffa8b0ff,0xffc0e0ff,0xffb8a8ff,0xffd0d8ff,0xff90c0f8,0xffc8d8ff,0xff9fd0ff,0xffd8e8ff,0xff8fb8f0,0xffb0e0ff,0xffa8c8ff,0xffc0c0ff,0xff9cc8e8,0xffc8d0ff,0xffb8c8ff,0xffa8d8f8,0xffd0e0ff};for(int i=0;i<colors.length;i++)colors[i]=blues[i];}
             else if("apricot".equals(document.optString("palette"))){int[] apricots={0xfff8e0a0,0xfff0d080,0xfff8d890,0xfff0c860,0xfff8e8a8,0xffffe090,0xfff8d8a0,0xffffd870,0xfff8d078,0xffffe8b0,0xfff8e0b8,0xffffd888,0xfff0d8a0,0xfff8e8c0,0xffffd890,0xfff0e0a0,0xfff8d880,0xffffe8a0};for(int i=0;i<colors.length;i++)colors[i]=apricots[i];}
             for(int day=1;day<=dayCount;day++){ArrayList<JSONObject> list=new ArrayList<>();for(int i=0;i<courses.length();i++){JSONObject c=courses.optJSONObject(i);if(c==null||c.optInt("displayDay",c.optInt("weekday"))!=day)continue;maximum=Math.max(maximum,Math.min(16,c.optInt("endPeriod",12)));if(c.optInt("startPeriod",1)<=16)list.add(c);}Collections.sort(list,(a,b)->Integer.compare(a.optInt("startPeriod",1),b.optInt("startPeriod",1)));
                 Block active=null;for(JSONObject c:list){int start=Math.max(1,c.optInt("startPeriod",1)),end=Math.max(start,Math.min(16,c.optInt("endPeriod",start)));if(active==null||start>active.end){active=new Block();active.day=day;active.start=start;active.end=end;blocks.add(active);}else active.end=Math.max(active.end,end);active.courses.add(c);}}
             JSONArray allCourses=document.optJSONArray("courses");if(allCourses!=null)for(int i=0;i<allCourses.length();i++){JSONObject c=allCourses.optJSONObject(i);if(c==null)continue;String nm=c.optString("name","课程").trim();if(!colorMap.containsKey(nm))colorMap.put(nm,(colorMap.size()*5)%colors.length);}
-            rows=11;height=(int)(yOf(rows)+row+dp(12));setContentDescription("第"+week+"周课表，七天、11节。点击课程查看详情。");setFocusable(true);
+            rows=11;height=(int)(yOf(rows)+row+dp(12));setContentDescription("第"+pageWeek+"周课表，七天、11节。点击课程查看详情。");setFocusable(true);
         }
         @Override protected void onMeasure(int w,int h){setMeasuredDimension(width,height);}
         @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);canvas.drawColor(0xfffefcfe);if(wallpaper!=null){paint.setAlpha(65);canvas.drawBitmap(wallpaper,null,new Rect(0,0,width,height),paint);paint.setAlpha(255);}paint.setTypeface(Typeface.DEFAULT);paint.setTextAlign(Paint.Align.CENTER);paint.setTextSize(dp(12));paint.setColor(mint);
-            Calendar date=startCalendar();if(date!=null)date.add(Calendar.DATE,(week-1)*7);
+            Calendar date=startCalendar();if(date!=null)date.add(Calendar.DATE,(pageWeek-1)*7);
             String[] days={"一","二","三","四","五","六","日"};Calendar today=Calendar.getInstance();if(date!=null){paint.setTextSize(dp(10));paint.setColor(CampusUi.MUTED);canvas.drawText(String.valueOf(date.get(Calendar.MONTH)+1),left/2,dp(24),paint);canvas.drawText("月",left/2,dp(38),paint);}
             for(int i=0;i<dayCount;i++){float x=left+(i+.5f)*column;if(date!=null){boolean isToday=date.get(Calendar.YEAR)==today.get(Calendar.YEAR)&&date.get(Calendar.DAY_OF_YEAR)==today.get(Calendar.DAY_OF_YEAR);if(isToday){paint.setColor(0xffd9ede5);paint.setStyle(Paint.Style.FILL);float w=column-2,h=dp(44);canvas.drawRect(new RectF(x-w/2,dp(2),x+w/2,dp(2)+h),paint);paint.setColor(mint);paint.setTextSize(dp(13));paint.setTypeface(Typeface.DEFAULT_BOLD);canvas.drawText(days[i],x,dp(24),paint);paint.setTextSize(dp(11));canvas.drawText(String.valueOf(date.get(Calendar.DAY_OF_MONTH)),x,dp(40),paint);paint.setTypeface(Typeface.DEFAULT);}else{paint.setColor(ink);paint.setTextSize(dp(12));canvas.drawText(days[i],x,dp(24),paint);paint.setTextSize(dp(11));paint.setColor(CampusUi.MUTED);canvas.drawText(String.valueOf(date.get(Calendar.DAY_OF_MONTH)),x,dp(40),paint);}date.add(Calendar.DATE,1);}}
             for(int r=0;r<rows;r++){float cx=left/2;float cy=yOf(r+1);paint.setColor(CampusUi.MUTED);paint.setTextSize(dp(11));paint.setTypeface(Typeface.DEFAULT_BOLD);canvas.drawText(String.valueOf(r+1),cx,cy+dp(17),paint);paint.setTypeface(Typeface.DEFAULT);paint.setColor(0xff999999);paint.setTextSize(dp(9));JSONArray times=document.optJSONArray("periodTimes");if(times!=null&&r<times.length()){JSONObject time=times.optJSONObject(r);if(time!=null){canvas.drawText(time.optString("start"),cx,cy+dp(30),paint);canvas.drawText(time.optString("end"),cx,cy+dp(42),paint);}}}
