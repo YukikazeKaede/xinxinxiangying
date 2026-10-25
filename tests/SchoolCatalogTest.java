@@ -24,6 +24,10 @@ public final class SchoolCatalogTest {
         check(SchoolCatalog.UG_EXAMS.equals(SchoolCatalog.url("exams",false)),"Exam schedule uses the observed module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("grades",false)),"Grades use the observed score module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("gpa",false)),"GPA is derived from the same score module");
+        check(SchoolCatalog.DEKT_HOME.equals(SchoolCatalog.url("second",false)),"Second-classroom credits use the xg host");
+        check(SchoolCatalog.DEKT_HOME.equals(SchoolCatalog.url("second",true)),"Second-classroom credits are shared by both student types");
+        check(!SchoolCatalog.isAcademic("second"),"Second-classroom credits are not the academic system");
+        check("第二课堂".equals(SchoolCatalog.title("second")),"Second-classroom title");
         check(SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_EXAMS)&&SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_GRADES),"Score and exam pages stay academic");
         check("exams".equals(SchoolCatalog.academicKind("exams")),"Exam kind");
         check("grades".equals(SchoolCatalog.academicKind("grades"))&&"grades".equals(SchoolCatalog.academicKind("gpa")),"Grade kinds share one dataset");

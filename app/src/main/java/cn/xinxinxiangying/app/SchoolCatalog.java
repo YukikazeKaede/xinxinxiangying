@@ -21,8 +21,12 @@ public final class SchoolCatalog {
     /** 学生成绩/学分绩点查询接口。 */
     public static final String UG_GRADES = "https://jwxt.sit.edu.cn/jwglxt/cjcx/cjcx_cxDgXscj.html";
     public static final String GNMK_GRADES = "N305005";
-    public static final String[] IDS = {"timetable", "card", "code", "electricity", "exams", "grades", "gpa"};
-    public static final String[] TITLES = {"个人课表", "校园卡充值", "校园付款码", "宿舍电费", "考试安排", "考试成绩", "学分绩点"};
+    /** 第二课堂学分（活动学分）页面，与教务系统不是同一套地址。 */
+    public static final String DEKT_HOME = "https://xg.sit.edu.cn/dektxf/xfqktj?redirect=%2F";
+    /** 第二课堂活动报名页：活动列表按板块分组。 */
+    public static final String DEKT_ACTIVITIES = "https://xg.sit.edu.cn/hdgl/hdydlist?redirect=%2F";
+    public static final String[] IDS = {"timetable", "card", "code", "electricity", "exams", "grades", "gpa", "second"};
+    public static final String[] TITLES = {"个人课表", "校园卡充值", "校园付款码", "宿舍电费", "考试安排", "考试成绩", "学分绩点", "第二课堂"};
     public static String title(String id) {
         for (int i=0;i<IDS.length;i++) if (IDS[i].equals(id)) return TITLES[i];
         return "学校服务";
@@ -61,6 +65,7 @@ public final class SchoolCatalog {
         if ("timetable".equals(id)) return UG_KB_ENTRY;
         if ("exams".equals(id)) return UG_EXAMS;
         if ("grades".equals(id) || "gpa".equals(id)) return UG_GRADES;
+        if ("second".equals(id)) return DEKT_HOME;
         if ("code".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/v5qrcode";
         if ("electricity".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/payele";
         // No recharge create-order endpoint has been verified: enter the official homepage.
