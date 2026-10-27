@@ -17,14 +17,18 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-/** User-operated school website session. Never posts credentials or initiates orders itself. */
+/** User-operated school website session; reuses only explicitly remembered credentials on the school's own CAS form. */
 public final class SchoolWebActivity extends Activity {
     private WebView web;
     private String paymentOwner="";private boolean paymentReady,retainPayment;
     private boolean authenticationAccepted;
     private boolean autoSync, autoStopped, autoQueryStarted, rememberLogin;
+    private boolean waitingForUser, sessionOnly, manualLoginSubmitted, passwordFromStore;
     private String pendingUsername="", pendingPassword="", loginScript="", navigationScript="",sessionScript="";
+    private String returnService="";
     private int autoLoginAttempts, autoPolls, loginPolls, menuPolls, pageVersion;
+    private int sessionRecoveryAttempts;
+    private long authFlowId;
     private View syncOverlay;
     private final android.os.Handler autoHandler=new android.os.Handler(android.os.Looper.getMainLooper());
     private TextView status;
@@ -62,12 +66,28 @@ public final class SchoolWebActivity extends Activity {
         autoSync=getIntent().getBooleanExtra("autoSync",false);
         // 成绩、考试与课表同一套登录与读取流程，只是最后取的学校接口不同。
         if(getIntent().getBooleanExtra("academicSync",false)&&SchoolCatalog.isAcademic(service)&&!"timetable".equals(service)){academicService=service;autoSync=true;}
+        if(autoSync){
+            authFlowId=getIntent().getLongExtra("authFlowId",0);
+            if(state!=null&&!SchoolSession.reauthActive())authFlowId=0;
+            if(authFlowId==0){
+                if(!SchoolSession.beginReauth(this,service)){finish();return;}
+                authFlowId=SchoolSession.currentReauthId();getIntent().putExtra("authFlowId",authFlowId);
+            }else if(authFlowId!=SchoolSession.currentReauthId()){finish();return;}
+        }
         syncAll=getIntent().getBooleanExtra("syncAll",false)&&"timetable".equals(service)&&autoSync&&!postgraduate;
-        if(!autoSync&&!AppSession.require(this))return;
+        sessionOnly=getIntent().getBooleanExtra("sessionOnly",false);
+        returnService=getIntent().getStringExtra("returnService");
+        if(returnService==null||returnService.isEmpty())returnService=service;
+        if(!autoSync&&!AppSession.require(this,service))return;
         pendingUsername=getIntent().getStringExtra("username");if(pendingUsername==null)pendingUsername="";
+        if(pendingUsername.isEmpty())pendingUsername=new SchoolAccount(this).username(postgraduate);
         pendingPassword=getIntent().getStringExtra("password");if(pendingPassword==null)pendingPassword="";
-        rememberLogin=getIntent().getBooleanExtra("remember",false);getIntent().removeExtra("password");
-        if(autoSync){loginScript=readAsset("school-login.js");navigationScript=readAsset("timetable-navigate.js");sessionScript=readAsset("school-session.js");}
+        rememberLogin=getIntent().getBooleanExtra("remember",false);
+        passwordFromStore=getIntent().getBooleanExtra("passwordFromStore",false);
+        getIntent().removeExtra("password");
+        // 手动浏览学校服务时也可能落到统一认证页，记住密码的用户可以只补验证码。
+        loginScript=readAsset("school-login.js");
+        if(autoSync){navigationScript=readAsset("timetable-navigate.js");sessionScript=readAsset("school-session.js");}
         if(academicService!=null)academicScript=assetOrNull("academic-api.js");
         if(syncAll)academicScript=assetOrNull("academic-api.js");
         academicXnm=getIntent().getStringExtra("academicXnm");if(academicXnm==null)academicXnm="";
@@ -87,7 +107,7 @@ public final class SchoolWebActivity extends Activity {
         });
         LinearLayout bar=new LinearLayout(this);bar.setBackgroundColor(android.graphics.Color.WHITE);bar.setGravity(android.view.Gravity.CENTER_VERTICAL);bar.setPadding(dp(12),dp(10),dp(12),dp(10));
         LinearLayout back=new LinearLayout(this);back.setGravity(android.view.Gravity.CENTER);back.setBackground(CampusUi.ripple(this,android.graphics.Color.WHITE,6));back.addView(new CampusUi.Icon(this,"back",CampusUi.GREEN),new LinearLayout.LayoutParams(dp(22),dp(22)));back.setContentDescription("返回");back.setFocusable(true);back.setOnClickListener(v->leaveSchool());bar.addView(back,new LinearLayout.LayoutParams(dp(44),dp(44)));
-        TextView title=CampusUi.text(this,academicService!=null?SchoolCatalog.title(service):syncAll?"同步课表与成绩":autoSync?"同步课表":"auth".equals(service)?"学校统一认证":SchoolCatalog.title(service),18,CampusUi.INK);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setPadding(dp(14),0,dp(4),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        TextView title=CampusUi.text(this,academicService!=null?SchoolCatalog.title(service):syncAll?"同步课表、成绩与第二课堂":sessionOnly?"学校统一认证":autoSync?"同步课表":"auth".equals(service)?"学校统一认证":SchoolCatalog.title(service),18,CampusUi.INK);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setPadding(dp(14),0,dp(4),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         if("timetable".equals(service)){
             importButton=CampusUi.button(this,autoSync?"手动导入":"导入",true,v->manualImport());bar.addView(importButton,new LinearLayout.LayoutParams(-2,dp(44)));
         }
@@ -95,14 +115,14 @@ public final class SchoolWebActivity extends Activity {
         status=CampusUi.text(this,"正在连接学校系统",11,CampusUi.MUTED);status.setPadding(dp(20),dp(2),dp(20),dp(10));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);root.addView(status);
         if(SchoolCatalog.isAcademic(service)){
             LinearLayout guide=CampusUi.column(this);guide.setPadding(dp(15),dp(12),dp(15),dp(12));guide.setBackground(CampusUi.shape(this,CampusUi.SOFT,8));
-            TextView guideTitle=CampusUi.text(this,syncAll?"正在同步课表、绩点与考试安排":autoSync?(academicService!=null?"正在读取学校数据":"正在为你获取课表"):"timetable".equals(service)?"登录 · 查询 · 导入":"在学校系统中查看",13,CampusUi.GREEN);guideTitle.setTypeface(null,android.graphics.Typeface.BOLD);guide.addView(guideTitle);
-            TextView hint=CampusUi.text(this,academicService!=null?"登录成功后自动读取并保存在本机，之后打开即可离线查看。验证码或二次验证请在学校页面完成；读取失败时原有记录不会改变。":syncAll?"登录成功后自动读取并保存课表、学分绩点与考试安排。验证码或二次验证请在学校页面完成；某一项读取失败不影响其它数据。":autoSync?"登录成功后自动读取并保存课表。验证码或二次验证请在学校页面完成；若没有自动完成，可在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”。":"timetable".equals(service)?"打开个人课表，选择学期并查询，再点右上角“导入”。":(postgraduate?"研究生":"本科生")+"：登录后选择对应菜单；可在“更多”中返回学校首页。",12,CampusUi.INK);hint.setLineSpacing(dp(3),1);hint.setPadding(0,dp(5),0,0);guide.addView(hint);
+            TextView guideTitle=CampusUi.text(this,syncAll?"正在同步课表、成绩、考试与第二课堂":autoSync?(academicService!=null?"正在读取学校数据":"正在为你获取课表"):"timetable".equals(service)?"登录 · 查询 · 导入":"在学校系统中查看",13,CampusUi.GREEN);guideTitle.setTypeface(null,android.graphics.Typeface.BOLD);guide.addView(guideTitle);
+            TextView hint=CampusUi.text(this,academicService!=null?"登录成功后自动读取并保存在本机，之后打开即可离线查看。验证码或二次验证请在学校页面完成；读取失败时原有记录不会改变。":syncAll?"登录成功后自动读取并保存课表、学分绩点、考试安排与第二课堂学分。验证码或二次验证请在学校页面完成；某一项读取失败不影响其它数据。":autoSync?"登录成功后自动读取并保存课表。验证码或二次验证请在学校页面完成；若没有自动完成，可在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”。":"timetable".equals(service)?"打开个人课表，选择学期并查询，再点右上角“导入”。":(postgraduate?"研究生":"本科生")+"：登录后选择对应菜单；可在“更多”中返回学校首页。",12,CampusUi.INK);hint.setLineSpacing(dp(3),1);hint.setPadding(0,dp(5),0,0);guide.addView(hint);
             LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,-2);gp.setMargins(dp(14),0,dp(14),dp(12));root.addView(guide,gp);
         }
         progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(CampusUi.GREEN));root.addView(progress,new LinearLayout.LayoutParams(-1,dp(2)));
         if("code".equals(service)&&!autoSync){paymentOwner=PaymentCodeWebView.owner(this,postgraduate);web=PaymentCodeWebView.obtain(this,paymentOwner);web.setVisibility(View.INVISIBLE);}
         else web=new WebView(this);
-        if(autoSync){FrameLayout stage=new FrameLayout(this);stage.addView(web,new FrameLayout.LayoutParams(-1,-1));LinearLayout loading=CampusUi.column(this);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(CampusUi.BG);loading.addView(new CampusUi.ScheduleArt(this),new LinearLayout.LayoutParams(dp(150),dp(140)));TextView message=CampusUi.text(this,syncAll?"正在登录学校并同步课表与成绩…":academicService!=null?"正在登录学校并读取数据…":"正在登录学校并查询课表…",15,CampusUi.INK);message.setGravity(android.view.Gravity.CENTER);message.setPadding(dp(20),dp(24),dp(20),dp(20));loading.addView(message);loading.addView(new ProgressBar(this),new LinearLayout.LayoutParams(dp(28),dp(28)));syncOverlay=loading;stage.addView(loading,new FrameLayout.LayoutParams(-1,-1));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));}
+        if(autoSync){FrameLayout stage=new FrameLayout(this);stage.addView(web,new FrameLayout.LayoutParams(-1,-1));LinearLayout loading=CampusUi.column(this);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(CampusUi.BG);loading.addView(new CampusUi.ScheduleArt(this),new LinearLayout.LayoutParams(dp(150),dp(140)));TextView message=CampusUi.text(this,syncAll?"正在登录学校并同步课表、成绩与第二课堂…":academicService!=null?"正在登录学校并读取数据…":sessionOnly?"正在验证学校账号…":"正在登录学校并查询课表…",15,CampusUi.INK);message.setGravity(android.view.Gravity.CENTER);message.setPadding(dp(20),dp(24),dp(20),dp(20));loading.addView(message);loading.addView(new ProgressBar(this),new LinearLayout.LayoutParams(dp(28),dp(28)));syncOverlay=loading;stage.addView(loading,new FrameLayout.LayoutParams(-1,-1));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));}
         else root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         WebSettings settings=web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -115,7 +135,7 @@ public final class SchoolWebActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient(){
             @Override public void onProgressChanged(WebView view,int value) { progress.setProgress(value); progress.setVisibility(value>=100?View.GONE:View.VISIBLE); }
             @Override public boolean onConsoleMessage(android.webkit.ConsoleMessage message) {
-                log("console "+message.sourceId()+":"+message.lineNumber());return true;
+                log("console "+safeUrl(message.sourceId())+":"+message.lineNumber());return true;
             }
         });
         web.setWebViewClient(new WebViewClient(){
@@ -139,7 +159,8 @@ public final class SchoolWebActivity extends Activity {
             @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon) {
                 paymentReady=false;
                 navigationFailed=false;pageVersion++;
-                log("start "+pageVersion+" "+url);
+                if(!SessionPolicy.isAuthHost(Uri.parse(url).getHost()))manualLoginSubmitted=false;
+                log("start "+pageVersion+" "+safeUrl(url));
                 if(!SchoolCatalog.isSchoolUrl(url)) {
                     navigationFailed=true; view.stopLoading(); status.setText("已停止外部页面 · 可在浏览器中继续"); return;
                 }
@@ -148,26 +169,48 @@ public final class SchoolWebActivity extends Activity {
             @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))view.setVisibility(View.VISIBLE);}
             @Override public void onPageFinished(WebView view,String url) {
                 if(url==null||!url.equals(view.getUrl()))return;
-                if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url)) status.setText("校方页面 · "+safeHost(url));
+                boolean authPage=!navigationFailed&&SchoolCatalog.isSchoolUrl(url)
+                    &&SessionPolicy.isAuthHost(Uri.parse(url).getHost());
+                if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))
+                    status.setText(authPage?"请登录学校账号，完成后会回到当前服务":"校方页面 · "+safeHost(url));
                 CookieManager.getInstance().flush();
                 if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
                     view.evaluateJavascript(timetableScript,null);
-                if(!autoSync&&!navigationFailed){int proofVersion=pageVersion;view.evaluateJavascript("!!document.querySelector('input[type=password]')",value->{if(web==null||isFinishing()||navigationFailed||proofVersion!=pageVersion||!url.equals(web.getUrl()))return;if("true".equals(value))rejectLogin("学校登录已失效，请重新登录");else paymentReady="code".equals(service)&&SchoolCatalog.url("code",postgraduate).equals(url);});}
-                if(autoSync&&!autoStopped&&!navigationFailed)advanceAuto(pageVersion);
+                if(!autoSync&&!navigationFailed){
+                    if(authPage)autoFillManualLogin();
+                    else paymentReady="code".equals(service)&&SchoolCatalog.url("code",postgraduate).equals(url);
+                }
+                if(autoSync&&!navigationFailed){
+                    // 用户在学校页面完成密码/验证码并跳转回来后，继续原来的同步。
+                    if(waitingForUser&&!SessionPolicy.isLoginUrl(url)){waitingForUser=false;autoStopped=false;}
+                    else if(waitingForUser&&authPage)observeLoginError();
+                    if(!autoStopped)advanceAuto(pageVersion);
+                }
                 // 「手动导入」先打开课表页时，页面加载完再自动接着读一次，用户只需点一次。
                 if(!navigationFailed&&manualAfterNav)continueManualImport(url);
             }
             @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error) {
-                navigationFailed=true; handler.cancel();if(autoSync&&!authenticationAccepted){rejectLogin("无法验证学校网站证书，请检查网络后重新登录");return;}autoStopped=true;revealSchool(); status.setText("安全连接失败，请勿在此页面输入账号");
+                navigationFailed=true; handler.cancel(); stopForServerError("无法验证学校网站证书 · 登录状态未改变");
                 new AlertDialog.Builder(SchoolWebActivity.this).setTitle("无法验证学校网站证书")
                     .setMessage("连接已停止。请检查手机日期、网络，或稍后重试。").setPositiveButton("知道了",null).show();
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error) {
-                if(request.isForMainFrame()) { navigationFailed=true;if(autoSync&&!authenticationAccepted){rejectLogin("连接学校失败，请检查网络后重新登录");return;}autoStopped=true;revealSchool(); status.setText("连接失败 · 请检查校园网或学校提供的校外访问方式"); }
+                if(request.isForMainFrame()) { navigationFailed=true; stopForServerError("连接学校失败 · 登录状态未改变，可返回重试"); }
             }
             @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response) {
-                if(request.isForMainFrame()) { navigationFailed=true;if(response.getStatusCode()==401||response.getStatusCode()==403){rejectLogin("学校登录未通过或已失效，请重新登录");return;}if(autoSync&&!authenticationAccepted){rejectLogin("学校暂未通过登录验证，请稍后重试");return;}autoStopped=true;revealSchool(); status.setText("学校返回 "+response.getStatusCode()+" · 可从学校首页重新进入"); }
+                if(!request.isForMainFrame())return;
+                navigationFailed=true;
+                int code=response.getStatusCode();
+                SessionPolicy.Action action=SessionPolicy.action(SessionPolicy.signalForHttp(code),autoSync);
+                if(action==SessionPolicy.Action.REAUTH){requestReauth("学校要求重新登录，请完成验证");return;}
+                if(action==SessionPolicy.Action.WAIT_FOR_USER){
+                    autoStopped=true;revealSchool();status.setText("学校要求重新登录，请在本页完成验证");
+                    return;
+                }
+                stopForServerError(code==403
+                    ?"学校拒绝访问（403）· 可能是权限不足，登录状态未清除"
+                    :"学校返回 "+code+" · 登录状态未改变，可稍后重试");
             }
         });
         web.setDownloadListener((url,userAgent,disposition,mimeType,length)->confirmExternal(url));
@@ -175,7 +218,20 @@ public final class SchoolWebActivity extends Activity {
             String owner=(postgraduate?"pg:":"ug:")+pendingUsername;
             android.content.SharedPreferences accountPrefs=getSharedPreferences("school_session",MODE_PRIVATE);
             Runnable load=()->{if(web==null||isFinishing()||isDestroyed())return;accountPrefs.edit().putString("owner",owner).apply();web.loadUrl(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_SSO);};
-            if(getIntent().getBooleanExtra("forceLogin",false)||!owner.equals(accountPrefs.getString("owner","")))CookieManager.getInstance().removeAllCookies(done->{CookieManager.getInstance().flush();android.webkit.WebStorage.getInstance().deleteAllData();load.run();});else load.run();
+            String previousOwner=accountPrefs.getString("owner","");
+            boolean clear=SessionPolicy.shouldClearCookies(getIntent().getBooleanExtra("clearSession",false),previousOwner,owner);
+            getIntent().removeExtra("clearSession");
+            if(clear){
+                // 清理完成前不记录新所有者，进程中断后必须重新清理旧 Cookie。
+                accountPrefs.edit().remove("owner").commit();
+                CookieManager.getInstance().removeAllCookies(done->{
+                    if(web==null||isFinishing()||isDestroyed())return;
+                    if(authFlowId!=SchoolSession.currentReauthId())return;
+                    CookieManager.getInstance().flush();
+                    android.webkit.WebStorage.getInstance().deleteAllData();
+                    load.run();
+                });
+            }else load.run();
         }else if("code".equals(service))web.loadUrl(SchoolCatalog.url(service,postgraduate),java.util.Collections.singletonMap("Cache-Control","no-cache"));
         else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
     }
@@ -203,11 +259,134 @@ public final class SchoolWebActivity extends Activity {
             if(!new LocalProfile(this,postgraduate).saveName(parsed.optString("studentName")))Toast.makeText(this,"姓名暂未保存，可稍后重新同步",Toast.LENGTH_SHORT).show();
     }
     private void revealSchool(){if(syncOverlay!=null)syncOverlay.setVisibility(View.GONE);}
-    private void rejectLogin(String message){if(isFinishing())return;autoStopped=true;autoHandler.removeCallbacksAndMessages(null);pendingPassword="";if(web!=null)web.stopLoading();AppSession.login(this,message,academicService!=null?academicService:"timetable");}
-    private void leaveSchool(){if(!AppSession.valid(this)){rejectLogin("登录尚未通过，请重新登录");return;}retainPayment=paymentReady&&!navigationFailed;finish();}
-    private void acceptAuthentication()throws Exception{if(authenticationAccepted)return;if(pendingUsername.trim().isEmpty())throw new IllegalArgumentException("学校未确认学号，请重新登录");new SchoolAccount(this).save(postgraduate,pendingUsername,pendingPassword,rememberLogin&&!pendingPassword.isEmpty());AppSession.verified(this,postgraduate,pendingUsername);authenticationAccepted=true;}
+    /** 只有学校明确要求认证时才走这里；保留本机身份与 Cookie，单飞启动一次登录。 */
+    private void requestReauth(String message){
+        if(isFinishing())return;
+        autoHandler.removeCallbacksAndMessages(null);
+        if(web!=null)web.stopLoading();
+        if(autoSync){
+            // 当前页面本来就在认证流程中，不能再启动自己并被单飞锁直接关闭。
+            // 仅允许一次学校 SSO 恢复；再次失败留在页面，避免认证重定向循环。
+            if(sessionRecoveryAttempts++==0&&isCurrentSession()){
+                autoStopped=false;waitingForUser=false;autoQueryStarted=false;navigationFailed=false;
+                status.setText("正在恢复学校登录状态…");
+                web.loadUrl(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_SSO);
+            }else stopForServerError(message+" · 自动恢复未成功，请返回后重试");
+            return;
+        }
+        autoStopped=true;waitingForUser=false;pendingPassword="";
+        AppSession.reauth(this,returnService,message);
+    }
+    /** 网络、证书、权限和服务端错误：停下自动流程，但不清登录态。 */
+    private void stopForServerError(String message){
+        autoStopped=true;waitingForUser=false;autoHandler.removeCallbacksAndMessages(null);
+        revealSchool();resetImportButton();status.setText(message);
+    }
+    /** 需要用户在学校页面完成密码/验证码：停在原页面，不重载、不重复提交。 */
+    private void waitForUser(String message){
+        autoStopped=true;waitingForUser=true;autoHandler.removeCallbacksAndMessages(null);
+        revealSchool();resetImportButton();status.setText(message);
+    }
+    private void observeLoginError(){
+        final int version=pageVersion;
+        web.evaluateJavascript(loginScript.replace("__CREDENTIALS__","{}"),result->{
+            if(web==null||isFinishing()||version!=pageVersion||!isCurrentSession())return;
+            if("rejected".equals(unquote(result))){
+                new SchoolAccount(this).forget(postgraduate);pendingPassword="";
+                status.setText("学校未通过账号或密码，请在学校页面重新输入");
+            }
+        });
+    }
+    /**
+     * 手动浏览学校服务时落到统一认证页：只在用户勾选过记住密码时填充一次。
+     * 有验证码就停下等用户输入，不重复提交，也不把页面密码框当成会话失效。
+     */
+    private void autoFillManualLogin(){
+        if(autoSync||loginScript.isEmpty())return;
+        if(manualLoginSubmitted){observeLoginError();return;}
+        org.json.JSONObject remembered=new SchoolAccount(this).remembered(postgraduate);
+        if(remembered==null)return;
+        manualLoginSubmitted=true;
+        final int version=pageVersion;
+        try{
+            org.json.JSONObject credentials=new org.json.JSONObject()
+                .put("username",remembered.optString("username"))
+                .put("password",remembered.optString("password"))
+                .put("submit",true);
+            web.evaluateJavascript(loginScript.replace("__CREDENTIALS__",credentials.toString()),result->{
+                if(web==null||isFinishing()||version!=pageVersion||!isCurrentSession())return;
+                String state=unquote(result);
+                if("challenge".equals(state))status.setText("请完成学校验证码，完成后会回到当前服务");
+                else if("rejected".equals(state)){
+                    new SchoolAccount(this).forget(postgraduate);
+                    status.setText("保存的密码未通过，请在学校页面重新输入");
+                }else if("submitted".equals(state))status.setText("正在验证学校账号…");
+                else if("not-login".equals(state)||"needs-login".equals(state))manualLoginSubmitted=false;
+            });
+        }catch(Exception e){manualLoginSubmitted=false;}
+    }
+    /** 认证成功后的统一回跳：不再一律回课表/首页。 */
+    private void resumeTarget(){
+        SchoolSession.endReauth(this,authFlowId);
+        SessionPolicy.Target target=SessionPolicy.target(returnService);
+        Intent main=new Intent(this,MainActivity.class).putExtra("tab",0)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        Intent next;
+        switch(target){
+            case SECOND: next=new Intent(this,DektActivity.class);break;
+            case SECOND_ACTIVITIES: next=new Intent(this,ActivitiesActivity.class);break;
+            case CARD:
+            case CODE:
+            case ELECTRICITY:
+                next=new Intent(this,SchoolWebActivity.class).putExtra("service",returnService).putExtra("postgraduate",postgraduate);break;
+            case ACADEMIC:
+                next=new Intent(this,AcademicActivity.class).putExtra("service",returnService).putExtra("postgraduate",postgraduate);break;
+            case TIMETABLE:
+            case MAIN:
+            default: next=main;break;
+        }
+        if(next==main)startActivity(main.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        else startActivities(new Intent[]{main,next});
+        finish();
+    }
+    private void leaveSchool(){
+        if(!authenticationAccepted)SchoolSession.endReauth(this,authFlowId);
+        if(!AppSession.valid(this)){finish();return;}
+        retainPayment=paymentReady&&!navigationFailed;finish();
+    }
+    private void acceptAuthentication()throws Exception{
+        if(!isCurrentSession())throw new IllegalStateException("账号已切换，已停止保存登录状态");
+        if(authenticationAccepted)return;
+        if(pendingUsername.trim().isEmpty())throw new IllegalArgumentException("学校未确认学号，请重新登录");
+        // 从 Keystore 复用的密码不是“本次新输入的密码”：只更新学号，保留原密文。
+        // 用户明确取消记住密码并重新输入时，才删除旧密文。
+        String secret=SessionPolicy.secretToSave(passwordFromStore,pendingPassword);
+        boolean remember=SessionPolicy.rememberToSave(passwordFromStore,rememberLogin,pendingPassword);
+        new SchoolAccount(this).save(postgraduate,pendingUsername,secret,remember);
+        AppSession.verified(this,postgraduate,pendingUsername);
+        SchoolSession.endReauth(this,authFlowId);
+        SchoolSession.markActive(this,returnService);
+        authenticationAccepted=true;
+    }
+    private boolean isCurrentSession(){
+        if(getSharedPreferences("school_profile",0).getBoolean("postgraduate",false)!=postgraduate)return false;
+        if(!autoSync)return pendingUsername.equals(new SchoolAccount(this).username(postgraduate));
+        if(!authenticationAccepted&&authFlowId!=SchoolSession.currentReauthId())return false;
+        return ((postgraduate?"pg:":"ug:")+pendingUsername)
+            .equals(getSharedPreferences("school_session",0).getString("owner",""));
+    }
     private void enterApp(){pendingPassword="";autoStopped=true;startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
-    private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){rejectLogin(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
+    /** 课表、成绩、考试完成后继续读第二课堂学分；失败不影响已保存数据。 */
+    private void startSecondClassSync(){
+        if(isFinishing()||isDestroyed())return;
+        if(!syncAll||postgraduate){enterApp();return;}
+        if(!AppSession.valid(this)||!isCurrentSession()){finish();return;}
+        status.setText("正在读取第二课堂学分…");
+        Intent i=new Intent(this,DektActivity.class).putExtra("autoSync",true).putExtra("postgraduate",postgraduate);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);finish();
+    }
+    private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){waitForUser(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
     /** 自动流程失败后不把用户踢回登录页：留在学校页面，把导入交回「手动导入」。 */
     private void offerManualImport(String message){
         if(isFinishing()||isDestroyed())return;
@@ -215,18 +394,10 @@ public final class SchoolWebActivity extends Activity {
         if(announce)manualHint=message;
         autoStopped=true;autoHandler.removeCallbacksAndMessages(null);manualMode=true;
         revealSchool();resetImportButton();
-        log("manual-import-offer "+message+" "+(web==null?"":web.getUrl()));
+        log("manual-import-offer "+message+" "+(web==null?"":safeUrl(web.getUrl())));
         if(importButton!=null){importButton.setEnabled(true);importButton.setText("手动导入");}
         status.setText(academicService!=null?message+" · 可在学校页面完成后重试":message+" · 请在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”");
         if(announce)Toast.makeText(this,academicService!=null?message+"。可在学校页面完成后再试。":message+"。可在学校页面打开课表后点“手动导入”。",Toast.LENGTH_LONG).show();
-    }
-    /** 登录页（统一认证）上的等待时间不占用同步预算，避免用户输验证码时被超时打断。 */
-    private static boolean isLoginPage(String url){
-        try{
-            java.net.URI uri=java.net.URI.create(url);String host=uri.getHost()==null?"":uri.getHost().toLowerCase(Locale.ROOT);
-            String path=uri.getPath()==null?"":uri.getPath().toLowerCase(Locale.ROOT);
-            return !(host.equals("jwxt.sit.edu.cn")||host.equals("yjsgl.sit.edu.cn"))||path.contains("login");
-        }catch(IllegalArgumentException e){return true;}
     }
     /** 登录后若菜单里找不到课表入口，直接打开学校菜单本身给出的课表页（同源、无凭据）。 */
     private String navigateScript(){return navigationScript.replace("__TIMETABLE_ENTRY__",org.json.JSONObject.quote(postgraduate?"":SchoolCatalog.UG_KB_ENTRY));}
@@ -234,8 +405,8 @@ public final class SchoolWebActivity extends Activity {
     private void advanceAuto(int version){
         if(web==null||isFinishing()||autoStopped||navigationFailed||autoQueryStarted||version!=pageVersion)return;
         String url=web.getUrl();if(url==null||!SchoolCatalog.isSchoolUrl(url)){stopAutomatic("学校登录页面来源无法确认");return;}
-        log("auto v="+version+" auto="+autoPolls+" login="+loginPolls+" menu="+menuPolls+" auth="+authenticationAccepted+" "+url);
-        if(isLoginPage(url)){if(++loginPolls>2400){offerManualImport("学校登录等待过久");return;}}
+        log("auto v="+version+" auto="+autoPolls+" login="+loginPolls+" menu="+menuPolls+" auth="+authenticationAccepted+" "+safeUrl(url));
+        if(SessionPolicy.isLoginUrl(url)){if(++loginPolls>2400){offerManualImport("学校登录等待过久");return;}}
         else if(++autoPolls>240){offerManualImport("自动获取课表超时");return;}
         if(loginScript.isEmpty()||navigationScript.isEmpty()){stopAutomatic("同步组件无法读取，请重新安装应用");return;}
         org.json.JSONObject credentials=new org.json.JSONObject();
@@ -244,36 +415,58 @@ public final class SchoolWebActivity extends Activity {
             if(web==null||autoStopped||version!=pageVersion)return;
             String state=unquote(result);
             log("login-state "+state);
-            if("rejected".equals(state)){rejectLogin("学校账号或密码未通过验证，请重新输入");return;}
+            if("rejected".equals(state)){
+                // 学校明确拒绝：清掉已保存的旧密码，改为让用户在学校页面重新输入，绝不反复重试。
+                new SchoolAccount(this).forget(postgraduate);
+                pendingPassword="";
+                waitForUser("学校未通过账号或密码，请在学校页面重新输入");
+                return;
+            }
             if("submitted".equals(state)){if(autoLoginAttempts==0)autoLoginAttempts++;status.setText("正在验证学校账号…");if(loginPolls>8){revealSchool();status.setText("请完成学校验证码或登录提示，提交后将继续同步");}scheduleAuto(version);return;}
-            if("challenge".equals(state)){autoLoginAttempts++;revealSchool();status.setText("请完成学校验证码，完成后将继续同步");return;}
-            if("needs-login".equals(state)){rejectLogin("学校账号或密码未通过验证，请重新登录");return;}
-            if("blocked".equals(state)||"unsupported".equals(state)){stopAutomatic("当前学校登录表单暂不支持自动验证，请稍后重试");return;}
+            if("challenge".equals(state)){autoLoginAttempts++;waitForUser("请完成学校验证码，完成后会自动继续");return;}
+            if("needs-login".equals(state)){pendingPassword="";waitForUser("请在学校页面完成登录或验证码，完成后会自动继续");return;}
+            if("blocked".equals(state)||"unsupported".equals(state)){
+                if(authenticationAccepted)stopAutomatic("当前学校登录表单暂不支持自动验证，请稍后重试");
+                else waitForUser("当前登录页需要手动完成，完成后会自动继续");
+                return;
+            }
             web.evaluateJavascript(sessionScript.replace("__EXPECTED_USER__",org.json.JSONObject.quote(pendingUsername)),proof->{
                 if(isFinishing()||autoStopped||version!=pageVersion)return;
                 log("session "+unquote(proof));
-                if("verified".equals(unquote(proof))){try{acceptAuthentication();}catch(Exception e){rejectLogin("学校登录状态无法保存，请重新登录");return;}}
+                if("verified".equals(unquote(proof))){try{acceptAuthentication();}catch(Exception e){waitForUser("登录状态无法保存，请重试");return;}}
                 advanceNavigation(version,url);
             });
         });
     }
     private void advanceNavigation(int version,String url){
+            // 非教务服务只需要建立统一认证会话，成功后回到用户原来要用的功能。
+            if(sessionOnly){
+                if(!authenticationAccepted){
+                    // 本机身份与“已点击登录”都不是远程认证证据，只接受 school-session 的真实身份佐证。
+                    if(SessionPolicy.isLoginUrl(url)){scheduleAuto(version);return;}
+                    waitForUser("学校页面暂未确认当前账号，请完成认证或返回后重试");return;
+                }
+                resumeTarget();return;
+            }
             // 成绩与考试数据由学校页面的查询接口给出，登录后不必再导航到任何页面。
             if(academicService!=null){
                 // 还停在统一认证页时不要发请求：否则会抢在用户输验证码之前就报读取失败。
-                if(isLoginPage(url)){scheduleAuto(version);return;}
+                if(SessionPolicy.isLoginUrl(url)){scheduleAuto(version);return;}
                 autoQueryStarted=true;navErrors=0;revealSchool();status.setText("正在读取学校数据…");importAcademic(url);return;
             }
             // 本科生课表由学校手机版接口直接给出，接口在任意已登录页面都能用，
             // 不必先把 WebView 导航到课表页（学校页面被直接打开时会报“系统运行异常”）。
-            if(timetableApiScript!=null&&!postgraduate){autoQueryStarted=true;navErrors=0;status.setText("正在读取学校课表…");importCurrentTimetable();return;}
+            if(timetableApiScript!=null&&!postgraduate){
+                if(SessionPolicy.isLoginUrl(url)){scheduleAuto(version);return;}
+                autoQueryStarted=true;navErrors=0;status.setText("正在读取学校课表…");importCurrentTimetable();return;
+            }
             web.evaluateJavascript(navigateScript(),navResult->{
                 if(web==null||autoStopped||version!=pageVersion)return;String nav=unquote(navResult);
-                log("nav "+nav+" "+url);
+                log("nav "+nav+" "+safeUrl(url));
                 if("ready".equals(nav)){autoQueryStarted=true;status.setText("正在获取所选学期课程…");navErrors=0;importCurrentTimetable();return;}
                 if(nav!=null&&nav.startsWith("error:")){if(++navErrors>=4){offerManualImport("自动打开课表页出错："+nav.substring(6));return;}}
                 else navErrors=0;
-                if("needs-login".equals(nav)){rejectLogin("学校登录已失效，请重新登录");return;}
+                if("needs-login".equals(nav)){requestReauth("学校登录已失效，请重新验证");return;}
                 if("not-academic".equals(nav)){scheduleAuto(version);return;}
                 if(authenticationAccepted)menuPolls++;
                 if(menuPolls==6){revealSchool();status.setText("已登录，正在打开学校课表页…");}
@@ -302,6 +495,12 @@ public final class SchoolWebActivity extends Activity {
     private String safeHost(String url) {
         String host=Uri.parse(url).getHost(); return host==null?"学校网站":host;
     }
+    /** 日志只保留主机与路径，绝不写入 ticket、token 或查询串。 */
+    private String safeUrl(String url) {
+        if(url==null)return "school";
+        try{Uri uri=Uri.parse(url);String path=uri.getPath()==null?"":uri.getPath();return (uri.getScheme()==null?"https":uri.getScheme())+"://"+(uri.getHost()==null?"school":uri.getHost())+path;}
+        catch(Exception e){return "school";}
+    }
     /** 学校周次表给出的第一周起始日，只有确实是周一时才自动填入开学日期。 */
     private static String firstWeekMonday(String date) {
         if(date==null||!date.matches("\\d{4}-\\d{2}-\\d{2}"))return "";
@@ -320,7 +519,7 @@ public final class SchoolWebActivity extends Activity {
         if(url==null){importCurrentTimetable();return;}
         web.evaluateJavascript(navigateScript(),result->{
             if(web==null||isFinishing()||isDestroyed())return;
-            String nav=unquote(result);log("manual-nav "+nav+" "+url);
+            String nav=unquote(result);log("manual-nav "+nav+" "+safeUrl(url));
             if("navigating".equals(nav)){manualAfterNav=true;status.setText("正在打开学校课表页…");if(importButton!=null)importButton.setEnabled(false);return;}
             importCurrentTimetable();
         });
@@ -331,7 +530,7 @@ public final class SchoolWebActivity extends Activity {
         if(navigationScript.isEmpty()){manualAfterNav=false;if(importButton!=null)importButton.setEnabled(true);importCurrentTimetable();return;}
         web.evaluateJavascript(navigateScript(),result->{
             if(web==null||isFinishing()||isDestroyed())return;
-            String nav=unquote(result);log("manual-after-nav "+nav+" "+url);
+            String nav=unquote(result);log("manual-after-nav "+nav+" "+safeUrl(url));
             if("navigating".equals(nav)&&++manualPages<3){status.setText("正在打开学校课表页…");return;}
             manualAfterNav=false;if(importButton!=null)importButton.setEnabled(true);importCurrentTimetable();
         });
@@ -352,7 +551,7 @@ public final class SchoolWebActivity extends Activity {
     private void startTimetableApi(final String url) {
         web.evaluateJavascript(timetableApiScript.replace("__TIMETABLE_API__",org.json.JSONObject.quote(SchoolCatalog.UG_KB_JSON)),result->{
             if(web==null||isFinishing()||isDestroyed())return;
-            if("started".equals(unquote(result))){status.setText("正在读取学校课表数据…");log("api started "+url);waitForTimetableQuery(url,0);return;}
+            if("started".equals(unquote(result))){status.setText("正在读取学校课表数据…");log("api started "+safeUrl(url));waitForTimetableQuery(url,0);return;}
             log("api fallback "+unquote(result));queryPageTimetable(url);
         });
     }
@@ -386,7 +585,7 @@ public final class SchoolWebActivity extends Activity {
             }
             else if("complete".equals(state)) extractTimetable(url);
             else if("empty".equals(state)){resetImportButton();showImportError("学校返回的本学期课表是空的，请确认学年学期选择后重试");}
-            else if("login".equals(reason)&&autoSync&&!authenticationAccepted){rejectLogin("学校登录已失效，请重新输入密码并完成验证码");}
+            else if("login".equals(reason)&&autoSync&&!authenticationAccepted){requestReauth("学校登录已失效，请重新验证");}
             else {resetImportButton();showImportError("学校课表查询未成功，请确认登录仍然有效并重新查询。没有使用之前学期的缓存结果。");}
         });
     }
@@ -412,7 +611,7 @@ public final class SchoolWebActivity extends Activity {
         log("sync-stage "+stage+" failed="+message);
         if("grades".equals(stage)){startAcademicStage("exams");return;}
         if(message!=null&&!message.isEmpty())Toast.makeText(this,"部分数据未读取："+message,Toast.LENGTH_LONG).show();
-        enterApp();
+        startSecondClassSync();
     }
     private void importAcademic(String url,String target) {
         if(web==null||academicScript==null){if(syncAll)finishAcademicStage(target,"读取组件无法使用");else showImportError("读取组件无法使用，请重新安装应用");return;}
@@ -430,7 +629,7 @@ public final class SchoolWebActivity extends Activity {
         }catch(org.json.JSONException e){if(syncAll)finishAcademicStage(target,"读取参数无法准备");else showImportError("读取参数无法准备");return;}
         web.evaluateJavascript(academicScript.replace("__ACADEMIC_PLAN__",org.json.JSONObject.quote(plan)),result->{
             if(web==null||isFinishing()||isDestroyed())return;
-            if("started".equals(unquote(result))){log("academic started "+target+" "+url);status.setText("正在读取学校"+(("exams".equals(target))?"考试安排":"学分绩点")+"…");waitForAcademic(url,0,target);return;}
+            if("started".equals(unquote(result))){log("academic started "+target+" "+safeUrl(url));status.setText("正在读取学校"+(("exams".equals(target))?"考试安排":"学分绩点")+"…");waitForAcademic(url,0,target);return;}
             log("academic start-failed "+target+" "+unquote(result));
             if(syncAll)finishAcademicStage(target,"学校数据读取没有启动");else showImportError("学校数据读取没有启动，请稍后重试");
         });
@@ -462,7 +661,7 @@ public final class SchoolWebActivity extends Activity {
             else if("script".equals(reason)||"http".equals(reason))failure="学校数据查询没有成功";
             else failure="学校数据查询未成功";
             if(syncAll){finishAcademicStage(target,failure);return;}
-            if("login".equals(reason)){if(!authenticationAccepted)rejectLogin("学校登录已失效，请重新输入密码并完成验证码");else showImportError("学校登录已失效，请重新登录后再试");return;}
+            if("login".equals(reason)){if(!authenticationAccepted)requestReauth("学校登录已失效，请重新验证");else showImportError("学校登录已失效，请重新登录后再试");return;}
             if("no-term".equals(reason)){showImportError("学校没有给出当前学年学期，请先打开一次课表确认学期后重试");return;}
             if("blocked".equals(reason)||"endpoint".equals(reason)||"host".equals(reason)){showImportError("学校数据地址未通过校验，已停止读取");return;}
             if("script".equals(reason)||"http".equals(reason)){showImportError("学校数据查询没有成功，请稍后重试");return;}
@@ -474,20 +673,28 @@ public final class SchoolWebActivity extends Activity {
         new Thread(()->{
             try{
                 org.json.JSONObject payload=new org.json.JSONObject(body);
+                org.json.JSONObject student=payload.optJSONObject("student");
+                String number=student==null?"":student.optString("number","").trim();
+                if(!SessionPolicy.sameAccount(pendingUsername,number))
+                    throw new IllegalArgumentException("学校返回的账号与本机账号不一致，已停止保存");
                 org.json.JSONObject parsed=AcademicParser.parse(SchoolCatalog.academicKind(target),payload,termHint());
                 parsed.put("studentType",postgraduate?"pg":"ug").put("sourceUrl",source==null?"":source);
                 org.json.JSONArray items=parsed.optJSONArray("items");
                 int count=items==null?0:items.length();
                 boolean keepOld=syncAll&&count==0;
                 if(keepOld)log("academic skip-empty "+target+" kept previous snapshot");
-                else new AcademicRepository(SchoolWebActivity.this).save(target,parsed);
                 log("academic "+(keepOld?"kept":"saved")+" "+target+" records="+count+" term="+parsed.optJSONObject("term").optString("label",""));
                 runOnUiThread(()->{
                     if(isFinishing()||isDestroyed())return;
+                    // 保存前再次校验账号，禁止旧页面的异步响应写进新账号的存储。
+                    try{
+                        acceptAuthentication();
+                        if(!keepOld)new AcademicRepository(SchoolWebActivity.this).save(target,parsed);
+                    }catch(Exception e){stopForServerError("账号状态已变化或无法保存，原有数据未覆盖");return;}
                     Toast.makeText(this,keepOld?"当前学期暂无"+("exams".equals(target)?"考试":"成绩")+"，已保留上次数据":"已读取 "+count+" 条记录",Toast.LENGTH_SHORT).show();
                     if(syncAll){
                         if("grades".equals(target))startAcademicStage("exams");
-                        else enterApp();
+                        else startSecondClassSync();
                         return;
                     }
                     // 刷新入口可能在登录前已被清理，读完统一回到对应的列表页。
@@ -529,9 +736,11 @@ public final class SchoolWebActivity extends Activity {
                     org.json.JSONArray raw=extraction.optJSONArray("raw");
                     if(raw!=null)for(int i=0;i<raw.length();i++){
                         org.json.JSONObject carrier=raw.optJSONObject(i),data=carrier==null?null:carrier.optJSONObject("data"),student=data==null?null:data.optJSONObject("xsxx");
-                        if(student!=null&&student.opt("XM") instanceof String&&
-                            (student.optString("XH","").isEmpty()||owner.equals(student.optString("XH")))){
-                            parsed.put("studentName",student.getString("XM")).put("studentOwner",owner);break;
+                        if(student!=null){
+                            String xh=student.optString("XH","");
+                            if(!SessionPolicy.sameAccount(owner,xh))
+                                throw new IllegalArgumentException("学校返回的账号与本机账号不一致，已停止保存");
+                            if(student.opt("XM") instanceof String){parsed.put("studentName",student.getString("XM")).put("studentOwner",owner);break;}
                         }
                     }
                     org.json.JSONArray rows=parsed.optJSONArray("courses");
@@ -540,6 +749,7 @@ public final class SchoolWebActivity extends Activity {
                     runOnUiThread(()->{
                         resetImportButton();
                         if(isFinishing()||isDestroyed()) return;
+                        if(!isCurrentSession()){showImportError("账号已切换，已停止保存课表");return;}
                         if(!url.equals(web.getUrl())) { showImportError("页面已跳转，请重新打开课表再导入"); return; }
                         if(autoSync)saveAutomaticTimetable(parsed);else previewTimetable(parsed);
                     });
@@ -585,6 +795,7 @@ public final class SchoolWebActivity extends Activity {
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try {
                 String semester=semesterInput.getText().toString().trim();
+                if(!isCurrentSession()){dialog.dismiss();showImportError("账号已切换，已停止保存课表");return;}
                 if(semester.isEmpty()){semesterInput.setError("请确认本次导入的学期名称");return;}
                 boolean sameSemester=semester.equals(old.optString("semester",""));
                 parsed.put("semester",semester).put("startDate",sameSemester?old.optString("startDate",""):"");
@@ -641,11 +852,16 @@ public final class SchoolWebActivity extends Activity {
                 catch(ActivityNotFoundException e) { Toast.makeText(this,"没有可处理此链接的应用",Toast.LENGTH_LONG).show(); }
             }).show();
     }
-    @Override public void onBackPressed() { if("code".equals(service)||!AppSession.valid(this)){leaveSchool();return;}if(web!=null&&web.canGoBack())web.goBack();else finish(); }
+    @Override public void onBackPressed() {
+        if("code".equals(service)||!AppSession.valid(this)){leaveSchool();return;}
+        if(autoSync&&!authenticationAccepted&&web!=null&&SessionPolicy.isLoginUrl(web.getUrl())){leaveSchool();return;}
+        if(web!=null&&web.canGoBack())web.goBack();else finish();
+    }
     @Override protected void onPause() { if(web!=null) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume(); if(web!=null) web.onResume(); }
-    @Override protected void onStop(){super.onStop();if("code".equals(service)&&!isFinishing()){retainPayment=false;finish();}}
+    @Override protected void onStop(){super.onStop();if("code".equals(service)&&!autoSync&&!isFinishing()){retainPayment=false;finish();}}
     @Override protected void onDestroy() {
+        if(autoSync&&isFinishing())SchoolSession.endReauth(this,authFlowId);
         autoHandler.removeCallbacksAndMessages(null);pendingPassword="";
         if(web!=null) {
             if(retainPayment&&!navigationFailed&&!paymentOwner.isEmpty()&&paymentOwner.equals(PaymentCodeWebView.owner(this,postgraduate)))PaymentCodeWebView.retain(web,paymentOwner);

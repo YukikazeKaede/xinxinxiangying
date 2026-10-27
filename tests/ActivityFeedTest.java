@@ -154,6 +154,23 @@ public final class ActivityFeedTest {
         check(ActivityFeed.types(null, items, "劳育").size() == 1, "旧缓存没有菜单时退回按活动里出现过的类型");
         check("01".equals(ActivityFeed.blockCode(cached, items, "德育")), "板块代码来自学校菜单");
 
+        // 学校菜单缺项时，活动里实际出现过的类型仍要出现在该板块下。
+        JSONArray itemOnly = new JSONArray();
+        JSONObject safety = item("D2", "网络育人", "2026-11-04 10:00:00", "2026-11-04 12:00:00", "", "", false);
+        safety.put("dl", "德育");
+        safety.put("dlcode", "01");
+        safety.put("lb", "网络育人");
+        itemOnly.put(safety);
+        List<String> merged = ActivityFeed.types(cached, itemOnly, "德育");
+        check(merged.size() == 5 && merged.contains("网络育人"), "菜单漏掉的板块类型要从活动中补齐");
+        JSONObject art = item("M1", "艺术实践", "2026-11-05 10:00:00", "2026-11-05 12:00:00", "", "", false);
+        art.put("dl", "美育");
+        art.put("dlcode", "03");
+        art.put("lb", "艺术实践");
+        itemOnly.put(art);
+        List<String> artTypes = ActivityFeed.types(cached, itemOnly, "美育");
+        check(artTypes.size() == 3 && artTypes.contains("艺术实践"), "美育类型合并学校菜单与活动里实际出现的类型");
+
         // 旧缓存没有 dldm/分组代码时，用类型代码前两位补出板块归属。
         JSONArray oldItems = new JSONArray();
         JSONObject oldMoral = item("O1", "旧德育活动", "2026-11-03 10:00:00", "2026-11-03 12:00:00", "", "", false);

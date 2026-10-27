@@ -5,7 +5,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 
-/** Access grant issued after a verified school response and kept on this device. */
+/**
+ * 本机已验证账号的身份记录。
+ *
+ * <p>它只回答“这台设备曾经验证过哪个账号”，不代表学校会话仍然有效。
+ * 学校会话是否可用，由每次真实页面/接口响应决定；需要重新认证时走
+ * {@link #reauth(Activity, String, String)}，不能把局部失败升级成全局退出。</p>
+ */
 public final class AppSession {
     private static final String STORE="school_session",KEY="identity",OWNER="owner",TIMETABLES="timetables_v1";
     private static String identity="";
@@ -36,10 +42,56 @@ public final class AppSession {
     public static synchronized void invalidate(Context c){
         identity="";
         PaymentCodeWebView.clear();
-        c.getApplicationContext().getSharedPreferences(STORE,0).edit().remove(KEY).commit();
+        SchoolSession.endReauth(c);
+        c.getApplicationContext().getSharedPreferences(STORE,0).edit().remove(KEY).remove(OWNER).commit();
     }
+
+    /**
+     * 会话恢复：保留本机身份与 Cookie，只打开一次认证流程；成功后回到原功能。
+     * 返回 false 表示已有认证流程在进行，本次不重复启动。
+     */
+    public static boolean reauth(Activity a,String service,String message){
+        String target=normalize(service);
+        if(!SchoolSession.beginReauth(a,target)){a.finish();return false;}
+        Intent i=new Intent(a,SchoolLoginActivity.class)
+            .putExtra("message",message)
+            .putExtra("service",target)
+            .putExtra("authFlowId",SchoolSession.currentReauthId())
+            .putExtra("reauth",true);
+        a.startActivity(i);
+        a.finish();
+        return true;
+    }
+
     public static void login(Activity a,String message){login(a,message,"timetable");}
-    public static void login(Activity a,String message,String service){invalidate(a);Intent i=new Intent(a,SchoolLoginActivity.class).putExtra("edit",true).putExtra("message",message).putExtra("service",service==null?"timetable":service).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);a.startActivity(i);a.finish();}
+
+    /** 明确退出或切换账号：清本机身份，并要求重新输入。 */
+    public static void login(Activity a,String message,String service){
+        invalidate(a);
+        startLogin(a,service,message,true);
+    }
     public static boolean require(Activity a){return require(a,"timetable");}
-    public static boolean require(Activity a,String service){if(valid(a))return true;login(a,"请使用学校账号和密码登录后使用",service);return false;}
+    public static boolean require(Activity a,String service){
+        if(valid(a))return true;
+        startLogin(a,service,"请使用学校账号和密码登录后使用",false);
+        return false;
+    }
+
+    private static void startLogin(Activity a,String service,String message,boolean clearSession){
+        String target=normalize(service);
+        // 多个页面同时发现未登录时只保留一个登录流程，避免叠出多个登录页。
+        if(!SchoolSession.beginReauth(a,target)){a.finish();return;}
+        Intent i=new Intent(a,SchoolLoginActivity.class)
+            .putExtra("edit",true)
+            .putExtra("message",message)
+            .putExtra("service",target)
+            .putExtra("authFlowId",SchoolSession.currentReauthId())
+            .putExtra("clearSession",clearSession);
+        a.startActivity(i);
+        a.finish();
+    }
+
+    private static String normalize(String service){
+        return service==null||service.trim().isEmpty()?"timetable":service;
+    }
 }

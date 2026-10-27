@@ -45,7 +45,7 @@ public final class PaymentCodeReuseInstrumentation extends Instrumentation {
         for(int i=0;i<50&&!(Boolean)field(page,"paymentReady");i++){if(!"code".equals(service))break;SystemClock.sleep(100);}
         return (WebView)field(page,"web");
     }
-    private void back(){SchoolWebActivity old=page;ui(()->old.onBackPressed());waitForIdleSync();page=null;}
+    private void back()throws Exception{SchoolWebActivity old=page;ui(()->old.onBackPressed());waitForIdleSync();for(int i=0;i<100&&!(Boolean)field(MainActivity.class,"paymentHostVisible");i++)SystemClock.sleep(50);page=null;}
     private void benchmark(){Bundle report=new Bundle();int result=Activity.RESULT_OK;
         try{
             if(!AppSession.valid(getTargetContext())){report.putString("state","login-required");return;}

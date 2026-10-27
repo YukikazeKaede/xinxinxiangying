@@ -26,6 +26,10 @@ public final class SchoolCatalogTest {
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("gpa",false)),"GPA is derived from the same score module");
         check(SchoolCatalog.DEKT_HOME.equals(SchoolCatalog.url("second",false)),"Second-classroom credits use the xg host");
         check(SchoolCatalog.DEKT_HOME.equals(SchoolCatalog.url("second",true)),"Second-classroom credits are shared by both student types");
+        check(SchoolCatalog.isSchoolUrl(SchoolCatalog.DEKT_SSO),"Dekt SSO stays on a school origin");
+        check(SchoolCatalog.DEKT_SSO.startsWith("https://authserver.sit.edu.cn/authserver/login?service="),"Dekt SSO goes through CAS login");
+        check(SchoolCatalog.DEKT_SSO.contains("check.zf"),"Dekt SSO uses the CAS service endpoint");
+        check(!SchoolCatalog.DEKT_SSO.contains("/zftal-xgxt-web/login"),"Never use the 404 Dekt login path");
         check(!SchoolCatalog.isAcademic("second"),"Second-classroom credits are not the academic system");
         check("第二课堂".equals(SchoolCatalog.title("second")),"Second-classroom title");
         check(SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_EXAMS)&&SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_GRADES),"Score and exam pages stay academic");
