@@ -25,8 +25,15 @@ public final class SchoolCatalog {
     public static final String DEKT_HOME = "https://xg.sit.edu.cn/dektxf/xfqktj?redirect=%2F";
     /** 第二课堂活动报名页：活动列表按板块分组。 */
     public static final String DEKT_ACTIVITIES = "https://xg.sit.edu.cn/hdgl/hdydlist?redirect=%2F";
-    public static final String[] IDS = {"timetable", "card", "code", "electricity", "exams", "grades", "gpa", "second"};
-    public static final String[] TITLES = {"个人课表", "校园卡充值", "校园付款码", "宿舍电费", "考试安排", "考试成绩", "学分绩点", "第二课堂"};
+    /**
+     * 学工系统的 CAS 入口。注意：不要用 `/zftal-xgxt-web/login`——未登录时它 302 到 CAS，
+     * 但已登录后会落到不存在的 Tomcat 路径并返回 404。这里直接走 CAS 的 service 入口，
+     * 换票成功后由 check.zf 建立学工会话，再打开具体页面。
+     */
+    public static final String DEKT_SSO = "https://authserver.sit.edu.cn/authserver/login?service="
+        + "https%3A%2F%2Fxg.sit.edu.cn%2Fzftal-xgxt-web%2Fteacher%2Fxtgl%2Findex%2Fcheck.zf";
+    public static final String[] IDS = {"timetable", "card", "code", "electricity", "exams", "grades", "gpa", "second", "second_activities"};
+    public static final String[] TITLES = {"个人课表", "校园卡充值", "校园付款码", "宿舍电费", "考试安排", "考试成绩", "学分绩点", "第二课堂", "第二课堂活动"};
     public static String title(String id) {
         for (int i=0;i<IDS.length;i++) if (IDS[i].equals(id)) return TITLES[i];
         return "学校服务";
@@ -66,6 +73,7 @@ public final class SchoolCatalog {
         if ("exams".equals(id)) return UG_EXAMS;
         if ("grades".equals(id) || "gpa".equals(id)) return UG_GRADES;
         if ("second".equals(id)) return DEKT_HOME;
+        if ("second_activities".equals(id)) return DEKT_ACTIVITIES;
         if ("code".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/v5qrcode";
         if ("electricity".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/payele";
         // No recharge create-order endpoint has been verified: enter the official homepage.

@@ -57,6 +57,10 @@ public final class ActivitiesActivity extends Activity {
     private EditText search;
     private WebView web;
     private String script;
+    private String loginScript;
+    private String pendingTarget;
+    private boolean loginSubmitted;
+    private boolean pg;
     private boolean importing, browsing;
     private boolean reading, signupSubmitted;
     private int generation;
@@ -69,8 +73,10 @@ public final class ActivitiesActivity extends Activity {
         CampusUi.window(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         store = new ActivityStore(this);
-        if (!AppSession.require(this)) return;
+        pg = getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false);
+        if (!AppSession.require(this, "second_activities")) return;
         script = asset("dekt-activities.js");
+        loginScript = asset("school-login.js");
         page = CampusUi.column(this);
         page.setBackgroundColor(CampusUi.BG);
         CampusUi.insets(page);
@@ -95,7 +101,7 @@ public final class ActivitiesActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (page != null && (!AppSession.require(this) || !store.isCurrent())) finish();
+        if (page != null && (!AppSession.require(this, "second_activities") || !store.isCurrent())) finish();
     }
 
     private boolean active(int token) {
@@ -227,7 +233,7 @@ public final class ActivitiesActivity extends Activity {
         card.setPadding(0, dp(6), 0, dp(6));
         filterHost.addView(card, cardParams());
         chipRow(card, "学年", years, year, value -> { year = value; render(); });
-        chipRow(card, "板块", blocks, block, value -> { block = value; render(); });
+        chipRow(card, "板块", blocks, block, value -> { block = value; type = ""; render(); });
         chipRow(card, "类型", types, type, value -> { type = value; render(); });
         chipRow(card, "状态", fixed("报名中", "无需报名", "已截止", "未开始", "已结束"), stateFilter,
             value -> { stateFilter = value; render(); });
@@ -250,11 +256,12 @@ public final class ActivitiesActivity extends Activity {
         row.setPadding(dp(14), dp(4), dp(8), dp(4));
         TextView label = CampusUi.text(this, name, 11, CampusUi.MUTED);
         row.addView(label, new LinearLayout.LayoutParams(dp(36), -2));
+        // “全部”固定在滚动区外，选中具体类型或横向滚动时也始终可见。
+        row.addView(chip(ActivityFeed.NONE, selected == null || selected.isEmpty(), v -> pick.on("")));
         HorizontalScrollView scroller = new HorizontalScrollView(this);
         scroller.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this);
         chips.setGravity(Gravity.CENTER_VERTICAL);
-        chips.addView(chip(ActivityFeed.NONE, selected == null || selected.isEmpty(), v -> pick.on("")));
         for (String option : options)
             chips.addView(chip(option, option.equals(selected), v -> pick.on(option)));
         scroller.addView(chips);
@@ -434,7 +441,7 @@ public final class ActivitiesActivity extends Activity {
     // ---- 学校页面：读列表、读详情、报名 ----
 
     private void loadList() {
-        if (!AppSession.require(this)) return;
+        if (!AppSession.require(this, "second_activities")) return;
         openWeb(SchoolCatalog.DEKT_ACTIVITIES, "{\"action\":\"list\"}", false);
     }
 
@@ -453,18 +460,55 @@ public final class ActivitiesActivity extends Activity {
     private void browse(String url) { openWeb(url, null, true); }
 
     private void openWeb(String url, String planJson, boolean keep) {
-        if (!AppSession.require(this)) return;
+        if (!AppSession.require(this, "second_activities")) return;
         importing = true;
         generation++;
         handler.removeCallbacksAndMessages(null);
         reading = signupSubmitted = false;
+        loginSubmitted = false;
+        pendingTarget = url;
         browsing = keep;
         plan = planJson == null ? "" : planJson;
         polls = 0;
         if (webPage == null) webPage = buildWeb();
-        webStatus.setText(browsing ? "学校页面已打开" : "正在打开学校页面…");
+        webStatus.setText(browsing ? "学校页面已打开" : "正在复用学校登录状态…");
         setContentView(webPage);
-        web.loadUrl(url);
+        // 先走学工统一认证入口，已有 CAS 会话时不再要求输入账号密码。
+        web.loadUrl(SchoolCatalog.DEKT_SSO);
+    }
+
+    private static boolean isAuthPage(String url) {
+        return SessionPolicy.isAuthHost(Uri.parse(url).getHost());
+    }
+
+    private static boolean isXgPage(String url) {
+        return "xg.sit.edu.cn".equalsIgnoreCase(Uri.parse(url).getHost());
+    }
+
+    /** 记住密码时只在统一认证页提交一次；验证码交给用户，失败不反复重试。 */
+    private void autoFillAuth() {
+        if (loginScript == null || loginScript.isEmpty() || !store.isCurrent()) return;
+        JSONObject remembered = new SchoolAccount(this).remembered(pg);
+        if (remembered == null) return;
+        final int token = generation;
+        try {
+            JSONObject credentials = new JSONObject();
+            if (!loginSubmitted) credentials.put("username", remembered.optString("username"))
+                .put("password", remembered.optString("password")).put("submit", true);
+            loginSubmitted = true;
+            web.evaluateJavascript(loginScript.replace("__CREDENTIALS__", credentials.toString()), value -> {
+                if (!active(token) || !isAuthPage(web.getUrl())) return;
+                String state = unquote(value);
+                if ("challenge".equals(state)) webStatus.setText("请完成学校验证码，完成后会自动继续");
+                else if ("rejected".equals(state)) {
+                    new SchoolAccount(this).forget(pg);
+                    webStatus.setText("保存的密码未通过，请在学校页面重新输入");
+                } else if ("submitted".equals(state)) webStatus.setText("正在验证学校账号…");
+                else if ("not-login".equals(state) || "needs-login".equals(state)) loginSubmitted = false;
+            });
+        } catch (Exception e) {
+            loginSubmitted = false;
+        }
     }
 
     private LinearLayout buildWeb() {
@@ -504,7 +548,26 @@ public final class ActivitiesActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 CookieManager.getInstance().flush();
-                if (!SchoolCatalog.isSchoolUrl(url)) return;
+                if (!importing || !store.isCurrent() || isFinishing() || !SchoolCatalog.isSchoolUrl(url) || !url.equals(view.getUrl())) return;
+                if (isAuthPage(url)) {
+                    webStatus.setText("请登录学校账号，登录后会自动回到第二课堂活动");
+                    autoFillAuth();
+                    return;
+                }
+                // 换票后先到学工首页，再打开用户本来要看的活动列表/详情。
+                if (pendingTarget != null) {
+                    if (url.equals(pendingTarget)) pendingTarget = null;
+                    else if (isXgPage(url) && SessionPolicy.isLoginUrl(url)) {
+                        webStatus.setText("请登录学校账号，登录后会自动回到第二课堂活动");
+                        return;
+                    } else if (isXgPage(url)) {
+                        String target = pendingTarget;
+                        pendingTarget = null;
+                        webStatus.setText("正在打开第二课堂活动…");
+                        web.loadUrl(target);
+                        return;
+                    }
+                }
                 if (browsing) {
                     webStatus.setText("学校页面已打开 · 报名请在学校页面上完成"); return;
                 }
@@ -516,6 +579,17 @@ public final class ActivitiesActivity extends Activity {
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) webStatus.setText("连接学校页面失败 · 请确认在校园网内");
+            }
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (!request.isForMainFrame() || view != web || !importing || isFinishing() || isDestroyed()
+                    || !store.isCurrent() || !request.getUrl().toString().equals(view.getUrl())) return;
+                String current = request.getUrl().toString();
+                if (response.getStatusCode() >= 400 && pendingTarget != null && !current.equals(pendingTarget)) {
+                    String target = pendingTarget;
+                    pendingTarget = null;
+                    webStatus.setText("统一认证入口暂不可用，直接打开第二课堂活动…");
+                    view.loadUrl(target);
+                }
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, android.net.http.SslError error) {
                 handler.cancel();
@@ -579,7 +653,7 @@ public final class ActivitiesActivity extends Activity {
 
     private void failed(String reason) {
         reading = false;
-        if ("login".equals(reason)) webStatus.setText("请先在上面登录学校账号，登录后再点“读取本页”");
+        if ("login".equals(reason)) webStatus.setText("学校登录状态已失效 · 请点右上角“刷新”重新验证，本机缓存不会丢失");
         else if ("blocked".equals(reason)) webStatus.setText("只在学校页面内读取");
         else if ("detail".equals(reason)) webStatus.setText("没有读到活动详情 · 请点“重新读取”");
         else webStatus.setText("没有读到活动列表 · 请确认页面加载完成后再点“读取本页”");

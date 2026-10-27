@@ -38,7 +38,7 @@ function env(options) {
   const body = element('body', '', options.nodes || []);
   body.getElementsByTagName = () => walk(body, []);
   const ctx = {
-    location: {protocol: 'https:', hostname: host, href: 'https://' + host + '/dektxf/xfqktj?redirect=%2F'},
+    location: {protocol: 'https:', hostname: host, pathname: '/dektxf/xfqktj', href: 'https://' + host + '/dektxf/xfqktj?redirect=%2F'},
     document: {
       body,
       getElementsByTagName(tag) { return tag === 'iframe' ? (options.frames || []) : []; },
@@ -181,4 +181,73 @@ hiddenParent.hidden = true;
 const hidden = run(env({nodes: [hiddenParent, row('SYNTHETIC_VISIBLE', '1.00 / 2.00', 16)]}));
 assert.equal(hidden.rows.length, 1, '隐藏容器里的旧数据不能读取');
 assert.equal(hidden.rows[0].name, 'SYNTHETIC_VISIBLE');
+
+function collapsed() {
+  const detail = element('section', '', [row('SYNTHETIC_EXPANDED', '1.00 / 2.00', 16)]);
+  detail.hidden = true;
+  const button = element('button', '', [element('span', '学分明细'), element('span', '展开')]);
+  let clicks = 0;
+  button.getAttribute = name => name === 'type' ? 'button' : null;
+  button.click = () => { clicks++; detail.hidden = !detail.hidden; };
+  return {detail, button, clicks: () => clicks};
+}
+const partial = collapsed();
+const partialState = run(env({nodes: [element('div', '累计获得 1.00 / 2.00 学分'), partial.button, partial.detail]}));
+assert.equal(partial.clicks(), 1, '总学分已显示时也展开明细，多个标签共用一个按钮不能重复点击');
+assert.equal(partialState.rows[0].name, 'SYNTHETIC_EXPANDED', '展开后再读取，不能提前接受只有总分的结果');
+
+const inFrame = collapsed();
+const frameState = run(env({frames: [frame([inFrame.button, inFrame.detail])]}));
+assert.equal(inFrame.clicks(), 1, '同源 iframe 中的明细也能展开');
+assert.equal(frameState.rows[0].name, 'SYNTHETIC_EXPANDED');
+
+const late = collapsed();
+const lateContext = env({nodes: [element('div', '正在加载')]});
+lateContext.__queue.push(() => {
+  for (const node of [late.button, late.detail]) {
+    node.parentElement = lateContext.document.body;
+    lateContext.document.body.children.push(node);
+  }
+});
+assert.equal(run(lateContext).rows[0].name, 'SYNTHETIC_EXPANDED', '异步出现的展开控件仍能被发现');
+assert.equal(late.clicks(), 1);
+
+let navigations = 0, submissions = 0, hiddenClicks = 0;
+const link = element('a', '展开');
+link.getAttribute = name => name === 'href' ? 'https://example.com/' : null;
+link.click = () => navigations++;
+const submit = element('button', '学分明细');
+submit.getAttribute = () => null;
+submit.form = {};
+submit.click = () => submissions++;
+const hiddenButton = element('button', '展开');
+hiddenButton.hidden = true;
+hiddenButton.click = () => hiddenClicks++;
+run(env({nodes: [link, submit, hiddenButton]}));
+assert.equal(navigations, 0, '不自动点击可能跳转的链接');
+assert.equal(submissions, 0, '不自动提交学校表单');
+assert.equal(hiddenClicks, 0, '不点击隐藏控件');
+
+let nestedSubmissions = 0;
+const nestedText = element('span', '学分明细');
+nestedText.onclick = () => {};
+nestedText.click = () => nestedSubmissions++;
+const nestedSubmit = element('button', '', [nestedText]);
+nestedSubmit.form = {};
+nestedSubmit.getAttribute = () => null;
+nestedSubmit.click = () => nestedSubmissions++;
+run(env({nodes: [nestedSubmit]}));
+assert.equal(nestedSubmissions, 0, '展开文字自身有处理器时也不能触发祖先按钮提交表单');
+
+const alreadyOpen = collapsed();
+alreadyOpen.detail.hidden = false;
+alreadyOpen.button.getAttribute = name => name === 'aria-expanded' ? 'true' : 'button';
+assert.equal(run(env({nodes: [alreadyOpen.button, alreadyOpen.detail]})).status, 'complete');
+assert.equal(alreadyOpen.clicks(), 0, '已展开区域不再点击收起');
+
+const otherPage = collapsed();
+const otherContext = env({nodes: [otherPage.button, otherPage.detail]});
+otherContext.location.pathname = '/hdgl/hdydlist';
+run(otherContext);
+assert.equal(otherPage.clicks(), 0, '自动展开限定在学分页');
 console.log('dekt-extract.test.cjs passed');

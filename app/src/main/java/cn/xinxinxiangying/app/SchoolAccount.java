@@ -21,7 +21,7 @@ public final class SchoolAccount {
     }
     public String username(boolean pg){return prefs.getString(pg?"pg_user":"ug_user","");}
     public JSONObject remembered(boolean pg){
-        try{String value=prefs.getString(pg?"pg_secret":"ug_secret","");if(value.isEmpty())return null;JSONObject box=new JSONObject(value);Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(box.getString("iv"),Base64.NO_WRAP)));cipher.updateAAD((pg?"pg":"ug").getBytes("UTF-8"));return new JSONObject(new String(cipher.doFinal(Base64.decode(box.getString("data"),Base64.NO_WRAP)),"UTF-8"));}catch(Exception e){return null;}
+        try{String value=prefs.getString(pg?"pg_secret":"ug_secret","");if(value.isEmpty())return null;JSONObject box=new JSONObject(value);Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(box.getString("iv"),Base64.NO_WRAP)));cipher.updateAAD((pg?"pg":"ug").getBytes("UTF-8"));JSONObject saved=new JSONObject(new String(cipher.doFinal(Base64.decode(box.getString("data"),Base64.NO_WRAP)),"UTF-8"));return username(pg).equals(saved.optString("username"))?saved:null;}catch(Exception e){return null;}
     }
     public void save(boolean pg,String username,String password,boolean remember)throws Exception{
         boolean changed=!username.equals(username(pg));SharedPreferences.Editor edit=prefs.edit().putString(pg?"pg_user":"ug_user",username);
@@ -30,6 +30,7 @@ public final class SchoolAccount {
             if(remember){Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.ENCRYPT_MODE,key());cipher.updateAAD((pg?"pg":"ug").getBytes("UTF-8"));byte[] data=cipher.doFinal(new JSONObject().put("username",username).put("password",password).toString().getBytes("UTF-8"));edit.putString(pg?"pg_secret":"ug_secret",new JSONObject().put("iv",Base64.encodeToString(cipher.getIV(),Base64.NO_WRAP)).put("data",Base64.encodeToString(data,Base64.NO_WRAP)).toString());}
             else edit.remove(pg?"pg_secret":"ug_secret");
         }
+        if(changed&&password.isEmpty())edit.remove(pg?"pg_secret":"ug_secret");
         if(!edit.commit())throw new IllegalStateException("登录设置保存失败");if(changed)((android.app.NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(77);
     }
     public void forget(boolean pg){prefs.edit().remove(pg?"pg_secret":"ug_secret").commit();}

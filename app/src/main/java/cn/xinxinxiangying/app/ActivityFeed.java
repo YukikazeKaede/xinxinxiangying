@@ -74,8 +74,10 @@ public final class ActivityFeed {
                 if (!out.contains(name)) out.add(name);
             }
         }
-        if (!out.isEmpty()) return out;
-        return fromItems(items, block);
+        // 菜单可能缺项或与活动数据不同步：把该板块活动里实际出现过的类型补在后面，
+        // 避免“板块下明明有这类活动，类型栏却选不到”。
+        for (String name : fromItems(items, block)) if (!out.contains(name)) out.add(name);
+        return out;
     }
 
     /** 板块名对应的学校大类代码；旧缓存没有代码时返回空串。 */

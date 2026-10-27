@@ -11,6 +11,8 @@
     var TROUBLE = /\d\s*\/\s*\d/;
     var END = Date.now() + 8000;
     var tries = 0;
+    var expanded = false;
+    var stableRows = '', stableReads = 0;
 
     function textOf(el) {
         return String((el && el.textContent) || '').replace(/[\s\u00a0]+/g, ' ').trim();
@@ -151,6 +153,54 @@
         }
         return out;
     }
+    // 只展开学分页里可见的明细控件，同一个控件只点一次；不导航、不提交表单。
+    function expandSections(list) {
+        if (String(location.pathname || '').indexOf('/dektxf/') !== 0) return false;
+        var controls = [];
+        for (var d = 0; d < list.length; d++) {
+        var all = list[d].body ? list[d].body.getElementsByTagName('*') : [];
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (!leaf(el) || !shown(el)) continue;
+            var t = textOf(el);
+            if (t !== '学分明细' && t !== '展开全部' && t !== '展开') continue;
+            var node = el;
+            for (var up = 0; up < 4 && node; up++) {
+                var tag = String(node.tagName || '').toUpperCase();
+                if (tag === 'BUTTON' || tag === 'A' || node.onclick || (node.getAttribute && node.getAttribute('role') === 'button')) {
+                    // 子标签也可能绑定事件，优先点击其所属控件，避免同一按钮被点两次。
+                    for (var ancestor = node.parentElement, depth = up + 1; ancestor && depth < 4; ancestor = ancestor.parentElement, depth++) {
+                        var ancestorTag = String(ancestor.tagName || '').toUpperCase();
+                        if (ancestorTag === 'BUTTON' || ancestorTag === 'A' || (ancestor.getAttribute && ancestor.getAttribute('role') === 'button')) {
+                            node = ancestor; tag = ancestorTag; break;
+                        }
+                    }
+                    var attr = function(name) { return node.getAttribute ? node.getAttribute(name) : null; };
+                    var href = String(attr('href') || '').trim();
+                    var type = String(attr('type') || 'submit').toLowerCase();
+                    if (node.disabled || attr('aria-expanded') === 'true' || tag === 'FORM'
+                        || (tag === 'A' && href && href !== '#') || (tag === 'BUTTON' && node.form && type !== 'button')) break;
+                    var blocked = false;
+                    for (var parent = node.parentElement; parent; parent = parent.parentElement) {
+                        var parentTag = String(parent.tagName || '').toUpperCase();
+                        var parentHref = parent.getAttribute ? String(parent.getAttribute('href') || '').trim() : '';
+                        var parentType = parent.getAttribute ? String(parent.getAttribute('type') || 'submit').toLowerCase() : 'submit';
+                        if ((parentTag === 'A' && parentHref && parentHref !== '#')
+                            || (parentTag === 'BUTTON' && parent.form && parentType !== 'button')) { blocked = true; break; }
+                    }
+                    if (blocked) break;
+                    if (controls.indexOf(node) < 0) controls.push(node);
+                    break;
+                }
+                node = node.parentElement;
+            }
+        }
+        }
+        for (var c = 0; c < controls.length; c++) {
+            try { controls[c].click(); } catch (e) { }
+        }
+        return controls.length > 0;
+    }
     function attempt() {
         if (state.status !== 'pending') return;
         tries++;
@@ -166,6 +216,17 @@
             if (one && (one.rows.length || one.earned)) { data = one; break; }
         }
         state.detail = 'docs=' + list.length + ' got=' + notes.join(',');
+        if (!expanded && expandSections(list)) {
+            expanded = true;
+            setTimeout(attempt, 400);
+            return;
+        }
+        if (expanded && tries < 20 && Date.now() < END) {
+            var signature = data && data.rows.length ? JSON.stringify(data.rows) : '';
+            stableReads = signature && signature === stableRows ? stableReads + 1 : 0;
+            stableRows = signature;
+            if (!signature || stableReads < 2) { setTimeout(attempt, 400); return; }
+        }
         if (data && (data.rows.length > 0 || data.earned)) {
             state.earned = data.earned;
             state.required = data.required;

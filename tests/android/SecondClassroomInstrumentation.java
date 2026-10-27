@@ -70,8 +70,52 @@ public final class SecondClassroomInstrumentation extends Instrumentation {
         for (String id : new String[]{"A", "B"}) items.put(new JSONObject().put("id", "SYNTHETIC_" + id)
             .put("name", "SYNTHETIC_ACTIVITY_" + id).put("dlmc", "德育").put("lbmc", "志愿公益")
             .put("start", "2099-11-01 13:00:00").put("end", "2099-11-01 16:00:00"));
+        JSONArray menus = new JSONArray();
+        for (int i = 1; i <= 12; i++) {
+            menus.put(new JSONObject().put("code", String.format(java.util.Locale.ROOT, "01%02d", i))
+                .put("name", i == 1 ? "志愿公益" : "SYNTHETIC_MORAL_TYPE_" + i));
+            menus.put(new JSONObject().put("code", String.format(java.util.Locale.ROOT, "03%02d", i))
+                .put("name", "SYNTHETIC_ART_MENU_" + i));
+        }
+        JSONArray art = new JSONArray().put(new JSONObject().put("id", "SYNTHETIC_ART")
+            .put("name", "SYNTHETIC_ART_ACTIVITY").put("dlmc", "美育").put("lbmc", "SYNTHETIC_ART_TYPE")
+            .put("start", "2099-11-01 13:00:00").put("end", "2099-11-01 16:00:00"));
         return new JSONObject().put("savedAt", System.currentTimeMillis()).put("list", new JSONObject()
-            .put("groups", new JSONArray().put(new JSONObject().put("name", "德育").put("items", items))));
+            .put("menus", menus).put("groups", new JSONArray()
+                .put(new JSONObject().put("name", "德育").put("code", "01").put("items", items))
+                .put(new JSONObject().put("name", "美育").put("code", "03").put("items", art))));
+    }
+    private ViewGroup filterRow(String name) throws Exception {
+        return (ViewGroup) text((View) field(activity, "filterHost"), name).getParent();
+    }
+    private void filterInteractions() throws Exception {
+        ui(() -> text(filterRow("板块"), "德育").performClick());
+        ui(() -> text(filterRow("类型"), "志愿公益").performClick());
+        check("志愿公益".equals(field(activity, "type")), "type selection takes effect");
+        ui(() -> text(filterRow("板块"), "美育").performClick());
+        check("".equals(field(activity, "type")), "changing block clears the previous type");
+        View root = activity.getWindow().getDecorView();
+        check(text(root, "SYNTHETIC_ART_ACTIVITY") != null, "new block is not hidden by a stale type");
+        check(text(filterRow("类型"), "SYNTHETIC_ART_TYPE") != null, "type missing from menus is available in the UI");
+        ViewGroup row = filterRow("类型");
+        View all = text(row, ActivityFeed.NONE);
+        HorizontalScrollView scroll = null;
+        for (int i = 0; i < row.getChildCount(); i++)
+            if (row.getChildAt(i) instanceof HorizontalScrollView) scroll = (HorizontalScrollView) row.getChildAt(i);
+        final HorizontalScrollView scroller = scroll;
+        check(scroller != null, "type options support horizontal scrolling");
+        final int[] before = new int[2], after = new int[2];
+        ui(() -> { all.getLocationOnScreen(before); scroller.scrollTo(Integer.MAX_VALUE, 0); });
+        ui(() -> all.getLocationOnScreen(after));
+        check(scroller.getScrollX() > 0, "long type list actually scrolls");
+        check(before[0] == after[0], "all option stays fixed while types scroll");
+        check(all.getGlobalVisibleRect(new android.graphics.Rect()), "fixed all option remains visible");
+        ui(() -> text(filterRow("类型"), "SYNTHETIC_ART_TYPE").performClick());
+        check("SYNTHETIC_ART_TYPE".equals(field(activity, "type")), "merged type can be selected");
+        ui(() -> text(filterRow("类型"), ActivityFeed.NONE).performClick());
+        check("".equals(field(activity, "type")), "fixed all option clears type selection");
+        ui(() -> text(filterRow("板块"), ActivityFeed.NONE).performClick());
+        check("".equals(field(activity, "block")), "all blocks can be restored");
     }
     @Override public void onStart() {
         Bundle report = new Bundle(); int result = Activity.RESULT_OK; boolean owned = false;
@@ -109,6 +153,7 @@ public final class SecondClassroomInstrumentation extends Instrumentation {
             launch(ActivitiesActivity.class);
             root = activity.getWindow().getDecorView();
             check(text(root, "SYNTHETIC_ACTIVITY_A") != null && text(root, "SYNTHETIC_ACTIVITY_B") != null, "cached activities render");
+            filterInteractions();
             ui(() -> ((EditText) field(activity, "search")).setText("SYNTHETIC_ACTIVITY_B"));
             check(text(root, "SYNTHETIC_ACTIVITY_A") == null && text(root, "SYNTHETIC_ACTIVITY_B") != null, "search filters cached activities");
             ui(() -> ((EditText) field(activity, "search")).setText(""));

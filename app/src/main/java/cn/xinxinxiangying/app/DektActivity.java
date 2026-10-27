@@ -49,6 +49,11 @@ public final class DektActivity extends Activity {
     private TextView status, webStatus;
     private WebView web;
     private String script;
+    private String loginScript;
+    private String pendingTarget;
+    private boolean loginSubmitted;
+    private boolean pg;
+    private boolean autoSync;
     private boolean importing, auto;
     private boolean reading;
     private int generation;
@@ -59,8 +64,11 @@ public final class DektActivity extends Activity {
         CampusUi.window(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         store = new DektStore(this);
-        if (!AppSession.require(this)) return;
+        pg = getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false);
+        autoSync = getIntent().getBooleanExtra("autoSync", false);
+        if (!AppSession.require(this, "second")) return;
         script = asset("dekt-extract.js");
+        loginScript = asset("school-login.js");
         page = CampusUi.column(this);
         page.setBackgroundColor(CampusUi.BG);
         CampusUi.insets(page);
@@ -103,11 +111,15 @@ public final class DektActivity extends Activity {
         page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(page);
         render();
+        if (autoSync) handler.postDelayed(this::importPage, 300);
     }
 
     @Override protected void onResume() {
         super.onResume();
-        if (page != null && (!AppSession.require(this) || !store.isCurrent())) { finish(); return; }
+        if (page != null && (!AppSession.require(this, "second") || !store.isCurrent())) {
+            if (autoSync) finishToApp(null); else finish();
+            return;
+        }
         if (!importing && page != null && AppSession.valid(this)) render();
     }
 
@@ -131,6 +143,7 @@ public final class DektActivity extends Activity {
 
     @Override public void onBackPressed() {
         if (importing) { quitWeb(); return; }
+        if (autoSync) { finishToApp(null); return; }
         leave();
     }
 
@@ -326,17 +339,20 @@ public final class DektActivity extends Activity {
     private void importPage() { openWeb(SchoolCatalog.DEKT_HOME, true); }
 
     private void openWeb(String url, boolean extract) {
-        if (!AppSession.require(this)) return;
+        if (!AppSession.require(this, "second")) { if (autoSync) finishToApp(null); return; }
         importing = true;
         generation++;
         reading = false;
+        loginSubmitted = false;
+        pendingTarget = url;
         handler.removeCallbacksAndMessages(null);
         auto = extract;
         polls = 0;
         if (webPage == null) webPage = buildWeb();
-        webStatus.setText("正在打开学校页面…");
+        webStatus.setText("正在复用学校登录状态…");
         setContentView(webPage);
-        web.loadUrl(url);
+        // 先走学工系统的统一认证入口；已有 CAS 会话时直接换票，不再要求输入密码。
+        web.loadUrl(SchoolCatalog.DEKT_SSO);
     }
 
     /** 内嵌的学校页面：只允许 sit.edu.cn，设置与其它学校页面一致。 */
@@ -382,6 +398,12 @@ public final class DektActivity extends Activity {
         cookies.setAcceptCookie(true);
         cookies.setAcceptThirdPartyCookies(web, false);
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                if (web != view || !importing || isFinishing()) return;
+                generation++;
+                reading = false;
+                handler.removeCallbacksAndMessages(null);
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 if (SchoolCatalog.isSchoolUrl(url) || "about:blank".equals(url)) return false;
@@ -395,7 +417,26 @@ public final class DektActivity extends Activity {
             }
             @Override public void onPageFinished(WebView view, String url) {
                 CookieManager.getInstance().flush();
-                if (!SchoolCatalog.isSchoolUrl(url)) return;
+                if (!importing || !store.isCurrent() || isFinishing() || !SchoolCatalog.isSchoolUrl(url) || !url.equals(view.getUrl())) return;
+                if (isAuthPage(url)) {
+                    webStatus.setText("请登录学校账号，登录后会自动回到第二课堂");
+                    autoFillAuth();
+                    return;
+                }
+                // CAS 换票后先落在学工首页，再打开用户本来要看的学分页。
+                if (pendingTarget != null) {
+                    if (url.equals(pendingTarget)) pendingTarget = null;
+                    else if (isXgPage(url) && SessionPolicy.isLoginUrl(url)) {
+                        webStatus.setText("请登录学校账号，登录后会自动回到第二课堂");
+                        return;
+                    } else if (isXgPage(url)) {
+                        String target = pendingTarget;
+                        pendingTarget = null;
+                        webStatus.setText("正在打开第二课堂页面…");
+                        web.loadUrl(target);
+                        return;
+                    }
+                }
                 boolean credits = creditsPage(url);
                 if (credits) webStatus.setText("第二课堂学分页面已打开 · 正在读取…");
                 else if (loginPage(url)) webStatus.setText("请登录学校账号，登录后会回到第二课堂页面");
@@ -406,10 +447,27 @@ public final class DektActivity extends Activity {
                 }
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) webStatus.setText("连接学校页面失败 · 请确认在校园网内");
+                if (!request.isForMainFrame() || !currentPage(view, request.getUrl().toString())) return;
+                if (autoSync) { finishToApp("连接学校失败，第二课堂未读取"); return; }
+                webStatus.setText("连接学校页面失败 · 请确认在校园网内");
+            }
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
+                if (!request.isForMainFrame() || !currentPage(view, request.getUrl().toString())) return;
+                String current = request.getUrl().toString();
+                // 统一认证入口失效时不要卡在 404：直接打开用户本来要看的学分页。
+                if (response.getStatusCode() >= 400 && pendingTarget != null && !current.equals(pendingTarget)) {
+                    String target = pendingTarget;
+                    pendingTarget = null;
+                    webStatus.setText("统一认证入口暂不可用，直接打开第二课堂…");
+                    view.loadUrl(target);
+                    return;
+                }
+                if (autoSync && response.getStatusCode() >= 400) finishToApp("第二课堂页面暂不可用，已保留上次数据");
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, android.net.http.SslError error) {
                 handler.cancel();
+                if (!currentPage(view, error.getUrl())) return;
+                if (autoSync) { finishToApp("无法验证学校网站证书，第二课堂未读取"); return; }
                 webStatus.setText("无法验证学校网站证书 · 已停止加载");
             }
         });
@@ -423,9 +481,47 @@ public final class DektActivity extends Activity {
         return path != null && path.contains("dektxf");
     }
 
+    private boolean currentPage(WebView view, String url) {
+        return view == web && importing && !isFinishing() && !isDestroyed() && store.isCurrent()
+            && url != null && url.equals(view.getUrl());
+    }
+
+    private static boolean isAuthPage(String url) {
+        return SessionPolicy.isAuthHost(Uri.parse(url).getHost());
+    }
+
+    private static boolean isXgPage(String url) {
+        return "xg.sit.edu.cn".equalsIgnoreCase(Uri.parse(url).getHost());
+    }
+
     private static boolean loginPage(String url) {
-        String host = Uri.parse(url).getHost();
-        return host != null && host.equals("authserver.sit.edu.cn");
+        return SessionPolicy.isLoginUrl(url);
+    }
+
+    /** 记住密码时只在统一认证页提交一次；验证码交给用户，失败不反复重试。 */
+    private void autoFillAuth() {
+        if (loginScript == null || loginScript.isEmpty() || !store.isCurrent()) return;
+        JSONObject remembered = new SchoolAccount(this).remembered(pg);
+        if (remembered == null) return;
+        final int token = generation;
+        try {
+            JSONObject credentials = new JSONObject();
+            if (!loginSubmitted) credentials.put("username", remembered.optString("username"))
+                .put("password", remembered.optString("password")).put("submit", true);
+            loginSubmitted = true;
+            web.evaluateJavascript(loginScript.replace("__CREDENTIALS__", credentials.toString()), value -> {
+                if (!active(token) || !isAuthPage(web.getUrl())) return;
+                String state = unquote(value);
+                if ("challenge".equals(state)) webStatus.setText("请完成学校验证码，完成后会自动继续");
+                else if ("rejected".equals(state)) {
+                    new SchoolAccount(this).forget(pg);
+                    webStatus.setText("保存的密码未通过，请在学校页面重新输入");
+                } else if ("submitted".equals(state)) webStatus.setText("正在验证学校账号…");
+                else if ("not-login".equals(state) || "needs-login".equals(state)) loginSubmitted = false;
+            });
+        } catch (Exception e) {
+            loginSubmitted = false;
+        }
     }
 
     private void quitWeb() {
@@ -434,6 +530,7 @@ public final class DektActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         if (web != null) web.stopLoading();
         importing = false;
+        if (autoSync) { finishToApp(null); return; }
         if (page != null) { setContentView(page); render(); }
     }
 
@@ -481,7 +578,11 @@ public final class DektActivity extends Activity {
 
     private void failed(String reason) {
         reading = false;
-        if ("login".equals(reason)) webStatus.setText("请先在上面登录学校账号，登录后再点“读取本页”");
+        if (autoSync && !"login".equals(reason)) {
+            finishToApp("第二课堂暂未读取，已保留上次数据");
+            return;
+        }
+        if ("login".equals(reason)) webStatus.setText("学校登录状态已失效 · 请点右上角“刷新”重新验证，本机缓存不会丢失");
         else if ("blocked".equals(reason)) webStatus.setText("只在学校页面内读取");
         else webStatus.setText("没有读到学分明细 · 请展开“学分明细”后再点“读取本页”");
     }
@@ -494,10 +595,30 @@ public final class DektActivity extends Activity {
                 open.clear();
                 importing = false;
                 handler.removeCallbacksAndMessages(null);
+                if (autoSync) { finishToApp("第二课堂学分已更新"); return; }
                 setContentView(page);
                 render();
                 Toast.makeText(this, "第二课堂学分已更新", Toast.LENGTH_SHORT).show();
-        } catch (Exception e) { reading = false; webStatus.setText("读取失败，请重试，原有学分已保留"); }
+        } catch (Exception e) {
+            reading = false;
+            if (autoSync) finishToApp("第二课堂未读取，原有学分已保留");
+            else webStatus.setText("读取失败，请重试，原有学分已保留");
+        }
+    }
+
+    /** 自动同步读完（或确认读不到）后回到主界面，不把用户留在临时 WebView。 */
+    private void finishToApp(String message) {
+        if (isFinishing()) return;
+        generation++;
+        importing = reading = false;
+        handler.removeCallbacksAndMessages(null);
+        if (web != null) web.stopLoading();
+        if (!store.isCurrent()) { finish(); return; }
+        if (message != null && !message.isEmpty())
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        startActivity(new Intent(this, MainActivity.class).putExtra("tab", 0)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
+        finish();
     }
 
     private static String unquote(String value) {

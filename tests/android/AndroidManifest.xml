@@ -2,11 +2,13 @@
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="28" />
     <application android:label="心心相应测试" />
     <instrumentation android:name=".SecondClassroomInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".SecondClassSyncInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".PaymentCodeReuseInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".TimetableFeaturesInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".WeekSwipeInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".TimetableInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".LoginFailureInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".SessionFlowInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".CampusProfileInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".CampusSummaryInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
 </manifest>

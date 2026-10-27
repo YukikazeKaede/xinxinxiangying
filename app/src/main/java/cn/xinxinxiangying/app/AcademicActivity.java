@@ -209,7 +209,8 @@ public final class AcademicActivity extends Activity {
         JSONObject remembered=account.remembered(postgraduate);
         Intent intent=new Intent(this,SchoolWebActivity.class);
         intent.putExtra("service",service).putExtra("academicSync",true).putExtra("postgraduate",postgraduate)
-            .putExtra("username",username).putExtra("password",remembered==null?"":remembered.optString("password","")).putExtra("remember",false);
+            .putExtra("username",username).putExtra("password",remembered==null?"":remembered.optString("password",""))
+            .putExtra("passwordFromStore",remembered!=null).putExtra("remember",false);
         if(!selectedXnm.isEmpty())intent.putExtra("academicXnm",selectedXnm).putExtra("academicXqm",selectedXqm);
         startActivity(intent);
     }
