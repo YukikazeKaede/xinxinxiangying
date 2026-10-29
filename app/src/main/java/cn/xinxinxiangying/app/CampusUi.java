@@ -52,7 +52,7 @@ public final class CampusUi {
         public Icon(Context c,String kind,int color){super(c);this.kind=kind;this.color=color;setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);}
         private void line(Canvas c,float x,float y,float x2,float y2){c.drawLine(x,y,x2,y2,p);}
         @Override protected void onDraw(Canvas c){c.save();c.scale(getWidth()/24f,getHeight()/24f);p.setColor(color);p.setStrokeWidth(1.7f);p.setStyle(Paint.Style.STROKE);p.setStrokeCap(Paint.Cap.ROUND);p.setStrokeJoin(Paint.Join.ROUND);
-            if(kind.equals("tools")){line(c,8,3,8,10);line(c,5,3,5,8);line(c,11,3,11,8);c.drawArc(5,5,11,13,0,180,false,p);line(c,8,12,8,22);c.drawArc(14,2,21,14,90,180,false,p);line(c,17.5f,14,17.5f,22);}
+            if(kind.equals("tools")){Path wrench=new Path();wrench.moveTo(14.7f,6.3f);wrench.quadTo(14.1f,7,14.7f,7.7f);wrench.lineTo(16.3f,9.3f);wrench.quadTo(17,9.9f,17.7f,9.3f);wrench.lineTo(21.3f,5.7f);wrench.cubicTo(22.4f,9.6f,18.7f,13.3f,14.8f,12.2f);wrench.lineTo(7.1f,19.9f);wrench.cubicTo(4.3f,22.7f,1.3f,19.7f,4.1f,16.9f);wrench.lineTo(11.8f,9.2f);wrench.cubicTo(10.7f,5.3f,14.4f,1.6f,18.3f,2.7f);wrench.close();c.drawPath(wrench,p);}
             else if(kind.equals("person")){c.drawCircle(12,7,3.4f,p);c.drawArc(5,13,19,25,180,180,false,p);}
             else if(kind.equals("campus")){Path path=new Path();path.moveTo(2,9);path.lineTo(12,3);path.lineTo(22,9);path.lineTo(12,14);path.close();c.drawPath(path,p);line(c,6,12,6,18);line(c,6,18,12,21);line(c,12,21,18,18);line(c,18,18,18,12);line(c,22,9,22,17);}
             else if(kind.equals("code")){c.drawRoundRect(3,3,9,9,1,1,p);c.drawRoundRect(15,3,21,9,1,1,p);c.drawRoundRect(3,15,9,21,1,1,p);line(c,15,15,18,15);line(c,18,15,18,21);line(c,21,18,21,21);line(c,14,21,15,21);}
