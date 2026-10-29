@@ -74,7 +74,7 @@
         };
     }
 
-    /** 官方完整列表：先读取动态筛选字典，再顺序读取所有分页；失败不交付半份缓存。 */
+    /** 官方完整列表：先读取动态筛选字典，每次按需读取10条；只交付完整的一页。 */
     function readList() {
         var xhr, filters = {}, scope = {}, selected = {}, names = Object.create(null), blocks = [], menus = [];
         var number = cfg.page === undefined ? 1 : Number(cfg.page), pageSize = 10;
@@ -131,7 +131,7 @@
             state.options = {source: 'school-list', filters: filters, scope: scope, blocks: blocks, menus: menus, groups: []};
             var fields = {inputType: JSON.stringify({hdmc: [criteria.text], qthdlx: ['']}), selectType: JSON.stringify(selected),
                 inputSqlType: '0', orders: '[]', showCount: String(pageSize), currentPage: String(number),
-                checkBoxType: '{}', dateType: '{}', numberType: '{}', all: '1'};
+                checkBoxType: '{}', dateType: '{}', numberType: '{}', all: cfg.mine === true ? '0' : '1'};
             fetch('/zftal-xgxt-web/hdgl/list.zf', Object.keys(fields).map(function (key) { return key + '=' + encodeURIComponent(fields[key]); }).join('&'), function (data) {
                 var total = integer(data.totalResult), size = integer(data.showCount), pages = integer(data.totalPage);
                 if (!Array.isArray(data.items) || integer(data.currentPage) !== number || total < 0 || size <= 0 || size > 10 || pages < 0
@@ -147,7 +147,7 @@
                     if (!seen[one.id]) { seen[one.id] = true; items.push(one); }
                 }
                 state.list = {source: 'school-list', filters: filters, scope: scope, blocks: blocks, menus: menus,
-                    query: criteria, page: number, pageSize: size, total: total, hasMore: number < pages,
+                    mine: cfg.mine === true, query: criteria, page: number, pageSize: size, total: total, hasMore: number < pages,
                     groups: items.length ? [{name: '', code: '', items: items}] : []};
                 state.status = 'complete';
             });

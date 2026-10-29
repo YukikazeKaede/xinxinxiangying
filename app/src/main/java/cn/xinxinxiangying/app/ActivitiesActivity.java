@@ -69,7 +69,7 @@ public final class ActivitiesActivity extends Activity {
     private JSONObject pendingOptions;
     private ScrollView activityScroll;
     private int requestedPage = 1;
-    private boolean loadMoreFailed;
+    private boolean loadMoreFailed, mine;
     private final Runnable searchRequest = () -> loadList(true);
     private String term = "";
     private String plan = "";
@@ -209,18 +209,34 @@ public final class ActivitiesActivity extends Activity {
         return box;
     }
 
+    private JSONObject visibleSnapshot() {
+        JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
+        return list != null && list.optBoolean("mine", false) == mine ? saved : null;
+    }
+
     private void render() {
-        JSONObject saved = store.read();
+        JSONObject saved = visibleSnapshot();
         if (barName != null) barName.setText("第二课堂活动");
         content.removeAllViews();
         filterHost = CampusUi.column(this);
         listHost = CampusUi.column(this);
+        LinearLayout tabs = new LinearLayout(this);
+        for (String label : new String[]{"所有活动", "我的活动"}) {
+            boolean personal = "我的活动".equals(label);
+            TextView tab = chip(label, mine == personal, v -> {
+                if (mine == personal) return;
+                mine = personal; detail = null; stateFilter = "";
+                loadList(true); render();
+            });
+            tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(42), 1));
+        }
+        content.addView(tabs);
         content.addView(searchBox());
         content.addView(filterHost);
         content.addView(listHost);
         if (saved == null) {
             status.setText("尚无本学期活动缓存");
-            filters(new JSONObject(), new JSONArray());
+            filters(queryCatalog(), new JSONArray());
             empty();
             return;
         }
@@ -285,7 +301,10 @@ public final class ActivitiesActivity extends Activity {
     private void scopeRow(LinearLayout card, JSONObject list, String key, String title, String code) {
         JSONArray values = options(list, key);
         List<String> names = new ArrayList<>();
-        if (values != null) for (int i = 0; i < values.length(); i++) add(names, values.optJSONObject(i).optString("name"));
+        if (values != null) for (int i = 0; i < values.length(); i++) {
+            String name = values.optJSONObject(i).optString("name");
+            if (!"xn".equals(key) || recentYear(name)) add(names, name);
+        }
         if ("xn".equals(key)) Collections.sort(names, Collections.reverseOrder());
         chipRow(card, title, names, optionName(values, code), name -> {
             String value = "";
@@ -295,7 +314,14 @@ public final class ActivitiesActivity extends Activity {
             }
             if ("xn".equals(key)) year = value; else term = value;
             loadList(true);
-        }, !"xq".equals(key));
+        }, false);
+    }
+
+    static boolean recentYear(String label) {
+        if (label == null || !label.matches("\\d{4}-\\d{4}")) return false;
+        java.util.Calendar now = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Shanghai"));
+        int current = now.get(java.util.Calendar.YEAR) - (now.get(java.util.Calendar.MONTH) < 8 ? 1 : 0);
+        return Math.abs(Integer.parseInt(label.substring(0, 4)) - current) <= 1;
     }
 
     private List<String> fixed(String... values) {
@@ -348,7 +374,7 @@ public final class ActivitiesActivity extends Activity {
     private void fillList() {
         loadMoreButton = null;
         listHost.removeAllViews();
-        JSONObject saved = store.read();
+        JSONObject saved = visibleSnapshot();
         if (saved == null) return;
         JSONArray visible = ActivityFeed.visible(ActivityFeed.flatten(saved.optJSONObject("list")), System.currentTimeMillis());
         long now = System.currentTimeMillis();
@@ -404,7 +430,7 @@ public final class ActivitiesActivity extends Activity {
         name.setTypeface(null, Typeface.BOLD);
         name.setMaxLines(2);
         head.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        head.addView(badge(ActivityFeed.state(item, now)));
+        head.addView(badge(mine ? "已报名" : ActivityFeed.state(item, now)));
         row.addView(head);
         String span = ActivityFeed.span(item.optString("start", ""), item.optString("end", ""));
         if (!span.isEmpty()) {
@@ -535,7 +561,7 @@ public final class ActivitiesActivity extends Activity {
     private void loadList(boolean selectedScope) {
         if (!AppSession.require(this, "second_activities")) return;
         try {
-            JSONObject request = new JSONObject().put("action", "list").put("page", 1).put("reuseDictionary", selectedScope);
+            JSONObject request = new JSONObject().put("action", "list").put("page", 1).put("reuseDictionary", selectedScope).put("mine", mine);
             JSONObject catalog = queryCatalog(), conditions = new JSONObject();
             if (selectedScope && scopeLoaded && catalog != null && "school-list".equals(catalog.optString("source"))) {
                 request.put("filters", new JSONObject().put("xn", year).put("xq", term));
@@ -564,7 +590,7 @@ public final class ActivitiesActivity extends Activity {
 
     private void loadNextPage() {
         if (importing || detail != null || !store.isCurrent()) return;
-        JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
+        JSONObject saved = visibleSnapshot(), list = saved == null ? null : saved.optJSONObject("list");
         if (list == null || !list.optBoolean("hasMore", false)) return;
         try {
             JSONObject criteria = list.optJSONObject("query");
@@ -573,7 +599,7 @@ public final class ActivitiesActivity extends Activity {
             JSONObject request = new JSONObject().put("action", "list").put("page", requestedPage)
                 .put("filters", list.getJSONObject("scope")).put("search", criteria.optString("text"))
                 .put("conditions", criteria.getJSONObject("conditions")).put("expectedTotal", list.getInt("total"))
-                .put("pageSize", list.getInt("pageSize"));
+                .put("pageSize", list.getInt("pageSize")).put("mine", mine);
             loadMoreFailed = false;
             if (loadMoreButton != null) { loadMoreButton.setText("正在加载…"); loadMoreButton.setEnabled(false); }
             openWeb(SchoolCatalog.DEKT_ACTIVITIES, request.toString(), false);
@@ -855,12 +881,12 @@ public final class ActivitiesActivity extends Activity {
 
     private void onList(JSONObject state) {
         JSONObject list = state.optJSONObject("list");
-        if (list == null || !"school-list".equals(list.optString("source")) || list.optJSONArray("groups") == null) { failed("list"); return; }
+        if (list == null || list.optBoolean("mine", false) != mine || !"school-list".equals(list.optString("source")) || list.optJSONArray("groups") == null) { failed("list"); return; }
         int oldY = activityScroll.getScrollY();
         try {
             if (requestedPage > 1) {
                 JSONObject saved = store.read(), old = saved == null ? null : saved.optJSONObject("list");
-                if (old == null || old.optInt("page") + 1 != list.optInt("page") || list.optInt("page") != requestedPage
+                if (old == null || old.optBoolean("mine", false) != list.optBoolean("mine", false) || old.optInt("page") + 1 != list.optInt("page") || list.optInt("page") != requestedPage
                     || old.optInt("total") != list.optInt("total") || old.optInt("pageSize") != list.optInt("pageSize")
                     || !old.getJSONObject("scope").getString("xn").equals(list.getJSONObject("scope").getString("xn"))
                     || !old.getJSONObject("scope").getString("xq").equals(list.getJSONObject("scope").getString("xq"))
@@ -943,6 +969,7 @@ public final class ActivitiesActivity extends Activity {
 
     private void restoreQuery() {
         JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
+        mine = list != null && list.optBoolean("mine", false);
         JSONObject criteria = list == null ? null : list.optJSONObject("query");
         JSONObject conditions = criteria == null ? null : criteria.optJSONObject("conditions");
         query = criteria == null ? "" : criteria.optString("text");
@@ -962,7 +989,7 @@ public final class ActivitiesActivity extends Activity {
         importing = false;
         browsing = false;
         setContentView(page);
-        if (detail != null) renderDetail(); else render();
+        if (detail != null) renderDetail(); else { restoreQuery(); render(); }
     }
 
     // ---- 活动详情页 ----

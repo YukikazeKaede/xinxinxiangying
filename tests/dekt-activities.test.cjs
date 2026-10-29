@@ -77,6 +77,18 @@ function listAnswer(items = [hit('A1'), hit('A2')], page = 1, total = items.leng
     totalPage: Math.ceil(total / size), pageSize: 15, limit: 15, pageNo: 0, totalCount: 0}};
 }
 
+test('my activities uses the observed read-only all=0 query and keeps paging scoped', () => {
+  const e = env(LIST, () => listAnswer());
+  run(e, {action: 'list', mine: true});
+  assert.equal(new URLSearchParams(e.calls[2].body).get('all'), '0');
+  assert.equal(e.__xinxinActs.list.mine, true);
+  assert.equal(e.calls.length, 3);
+  assert.ok(e.calls.every(c => !c.target.includes('/apply/') && !c.target.includes('signup')));
+  run(e, {action: 'list', reuseDictionary: true});
+  assert.equal(new URLSearchParams(e.calls.at(-1).body).get('all'), '1');
+  assert.equal(e.__xinxinActs.list.mine, false);
+});
+
 test('first page uses official current-term defaults and exposes all category choices', () => {
   const e = env(LIST, () => listAnswer());
   assert.equal(run(e, {action: 'list'}), 'started');
