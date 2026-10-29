@@ -70,25 +70,29 @@ public final class MainActivity extends Activity {
         java.text.SimpleDateFormat dateFormat=new java.text.SimpleDateFormat("M月d日 EEEE",java.util.Locale.CHINA);dateFormat.setTimeZone(today.getTimeZone());
         TextView date=text(dateFormat.format(today.getTime()),12,0xffe5f4ef);date.setPadding(0,dp(7),0,dp(5));caption.addView(date);
         String summary;try{summary=campusSummary(new TimetableRepository(this).read(),today);}catch(RuntimeException e){summary="课表暂无法读取，请重新同步";}
-        caption.addView(text(summary,14,Color.WHITE));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(176)));gap(14);
-        LinearLayout identity=panel(12);identity.setOrientation(LinearLayout.HORIZONTAL);identity.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout info=CampusUi.column(this);TextView school=text("我的校园",18,teal);school.setTypeface(null,Typeface.BOLD);info.addView(school);TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(0,dp(4),0,0);info.addView(student);identity.addView(info,new LinearLayout.LayoutParams(0,-2,1));Button change=CampusUi.button(this,"切换身份",false,v->selectProfile());identity.addView(change,new LinearLayout.LayoutParams(-2,dp(44)));gap(14);
-        LinearLayout statistics=panel(12);statistics.setOrientation(LinearLayout.HORIZONTAL);
+        caption.addView(text(summary,14,Color.WHITE));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(152)));gap(16);
+        LinearLayout statistics=toolPanel();statistics.setOrientation(LinearLayout.HORIZONTAL);statistics.setPadding(dp(8),dp(14),dp(8),dp(14));
         org.json.JSONObject grades=new AcademicRepository(this).read("grades"), second=new DektStore(this).read();
         statistic(statistics,AcademicParser.overallGpa(grades),"平均绩点",v->openService("gpa"));
-        statistic(statistics,second==null?"":second.optString("earned"),"第二课堂",v->openService("second"));gap(14);
-        LinearLayout services=panel(12);
-        serviceGrid(services,new String[]{"exams","gpa"},new String[]{"考试安排","学分绩点"},new int[]{0xff5986cf,0xffec956a});gap(18);
-        LinearLayout dekt=panel(12);section(dekt,"第二课堂");
-        dekt.addView(row("second","学分情况","累计学分与德育、劳育、美育、健康教育明细",v->startActivity(new Intent(this,DektActivity.class))));divider(dekt);
-        dekt.addView(row("calendar","活动报名","活动列表、筛选与报名",v->startActivity(new Intent(this,ActivitiesActivity.class))));gap(16);
-        LinearLayout life=panel(12);section(life,"生活助手");serviceGrid(life,new String[]{"card","code","electricity"},new String[]{"校园卡","校园付款码","宿舍电费"},new int[]{0xff458ec7,0xffd5a34e,0xff62a481});gap(16);
-        gap(20);TextView note=text("校园服务由学校系统提供",11,muted);note.setGravity(Gravity.CENTER);content.addView(note);
+        statistic(statistics,second==null?"":second.optString("earned"),"第二课堂",v->openService("second"));gap(16);
+        LinearLayout services=toolPanel();services.setPadding(dp(6),dp(14),dp(6),dp(14));
+        serviceGrid(services,new String[]{"exams","gpa","second","activities","card","code","electricity","account"},
+            new String[]{"考试安排","学分绩点","学分情况","活动报名","校园卡","付款码","宿舍电费","学校账号"});gap(12);
+        LinearLayout identity=new LinearLayout(this);identity.setGravity(Gravity.CENTER_VERTICAL);identity.setPadding(dp(22),0,dp(14),0);
+        identity.addView(new CampusUi.Icon(this,"person",muted),new LinearLayout.LayoutParams(dp(17),dp(17)));
+        TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(dp(7),0,0,0);identity.addView(student,new LinearLayout.LayoutParams(0,-2,1));
+        TextView change=text("切换身份  ›",12,teal);change.setGravity(Gravity.CENTER);change.setPadding(dp(10),0,dp(6),0);change.setBackground(CampusUi.ripple(this,CampusUi.BG,10));change.setFocusable(true);change.setContentDescription("切换身份");change.setOnClickListener(v->selectProfile());identity.addView(change,new LinearLayout.LayoutParams(-2,dp(44)));content.addView(identity);
+        gap(12);TextView note=text("校园服务由学校系统提供",11,muted);note.setGravity(Gravity.CENTER);content.addView(note);
+    }
+    private LinearLayout toolPanel(){
+        LinearLayout box=CampusUi.column(this);box.setBackground(CampusUi.shape(this,Color.WHITE,20));box.setElevation(dp(2));
+        if(android.os.Build.VERSION.SDK_INT>=28){box.setOutlineAmbientShadowColor(0x16086859);box.setOutlineSpotShadowColor(0x18086859);}
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(14),0,dp(14),0);content.addView(box,lp);return box;
     }
     private void statistic(LinearLayout parent,String value,String label,View.OnClickListener click){
-        LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(0,dp(10),0,dp(10));
-        TextView number=text(value.isEmpty()?"—":value,30,teal);number.setTypeface(null,Typeface.BOLD);number.setGravity(Gravity.CENTER);cell.addView(number);
-        TextView name=text(label,16,muted);name.setTypeface(null,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(6),0,0);cell.addView(name);
+        LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(0,dp(7),0,dp(7));
+        TextView number=text(value.isEmpty()?"—":value,32,teal);number.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));number.setGravity(Gravity.CENTER);number.setIncludeFontPadding(false);cell.addView(number);
+        TextView name=text(label,16,0xff666b69);name.setTypeface(null,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(8),0,0);cell.addView(name);
         cell.setBackground(CampusUi.ripple(this,Color.WHITE,10));cell.setFocusable(true);
         cell.setContentDescription(label+"，"+(value.isEmpty()?"尚未导入，点击读取":value));cell.setOnClickListener(click);
         parent.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
@@ -103,11 +107,17 @@ public final class MainActivity extends Activity {
         int week=TimetableModel.week(doc,date),day=(date.get(java.util.Calendar.DAY_OF_WEEK)+5)%7+1;
         int count=TimetableModel.day(doc,week,day).length();return "第 "+week+" 周 · "+(count==0?"今日没有课程":"今日 "+count+" 项课程安排");
     }
-    private void section(LinearLayout box,String title){TextView t=text(title,17,ink);t.setPadding(dp(10),0,0,0);GradientDrawable marker=CampusUi.shape(this,teal,0);android.graphics.drawable.LayerDrawable bg=new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{marker});bg.setLayerWidth(0,dp(3));bg.setLayerHeight(0,dp(18));bg.setLayerGravity(0,Gravity.LEFT|Gravity.CENTER_VERTICAL);t.setBackground(bg);box.addView(t);}
-    private void serviceGrid(LinearLayout parent,String[] ids,String[] titles,int[] colors){
-        LinearLayout grid=new LinearLayout(this);grid.setPadding(0,dp(10),0,dp(4));for(int i=0;i<ids.length;i++){final String id=ids[i];LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(0,dp(12),0,dp(10));cell.setBackground(CampusUi.ripple(this,Color.WHITE,8));
-            LinearLayout iconBox=new LinearLayout(this);iconBox.setGravity(Gravity.CENTER);iconBox.setBackground(CampusUi.shape(this,(colors[i]&0x00ffffff)|0x14000000,10));iconBox.addView(new CampusUi.Icon(this,"timetable".equals(id)?"calendar":id,colors[i]),new LinearLayout.LayoutParams(dp(29),dp(29)));cell.addView(iconBox,new LinearLayout.LayoutParams(dp(48),dp(48)));
-            TextView name=text(titles[i],12,ink);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(9),0,0);cell.addView(name);grid.addView(cell,new LinearLayout.LayoutParams(0,-2,1));cell.setFocusable(true);cell.setContentDescription(titles[i]);cell.setOnClickListener(v->openService(id));}parent.addView(grid);
+    private void serviceGrid(LinearLayout parent,String[] ids,String[] titles){
+        for(int start=0;start<ids.length;start+=4){
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.TOP);
+            for(int i=start;i<Math.min(start+4,ids.length);i++){
+                final String id=ids[i];LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(dp(1),dp(14),dp(1),dp(14));cell.setMinimumHeight(dp(108));cell.setBackground(CampusUi.ripple(this,Color.WHITE,12));
+                cell.addView(new ServiceIcon(this,id),new LinearLayout.LayoutParams(dp(44),dp(44)));
+                TextView name=text(titles[i],14,0xff4c5350);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(10),0,0);name.setMaxLines(2);name.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_BALANCED);cell.addView(name,new LinearLayout.LayoutParams(-1,-2));
+                cell.setFocusable(true);cell.setContentDescription(titles[i]);cell.setOnClickListener(v->openService(id));row.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+            }
+            parent.addView(row,new LinearLayout.LayoutParams(-1,-2));
+        }
     }
     private View row(String icon,String title,String subtitle,View.OnClickListener click){
         LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(0,dp(12),0,dp(12));row.setMinimumHeight(dp(56));row.setBackground(CampusUi.ripple(this,Color.WHITE,14));
@@ -139,6 +149,8 @@ public final class MainActivity extends Activity {
     private void openService(String id) {
         if("timetable".equals(id)) { selectTab(0); return; }
         if("second".equals(id)) { startActivity(new Intent(this,DektActivity.class)); return; }
+        if("activities".equals(id)) { startActivity(new Intent(this,ActivitiesActivity.class)); return; }
+        if("account".equals(id)) { startActivity(new Intent(this,SchoolLoginActivity.class).putExtra("edit",true)); return; }
         // 考试、成绩、绩点使用与课表相同的学校登录流程，读到数据后在本机列表里查看。
         if(SchoolCatalog.isAcademic(id)) { startActivity(new Intent(this,AcademicActivity.class).putExtra("service",id).putExtra("postgraduate",isPostgraduate())); return; }
         Intent intent=new Intent(this,SchoolWebActivity.class); intent.putExtra("service",id); intent.putExtra("postgraduate",isPostgraduate()); startActivity(intent);
