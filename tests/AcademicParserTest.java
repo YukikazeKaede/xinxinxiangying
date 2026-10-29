@@ -39,6 +39,19 @@ public final class AcademicParserTest {
         check("86.67".equals(summary.getString("average")),"学分加权平均分");
         check("3.67".equals(summary.getString("gpa")),"学分加权绩点");
 
+        check(AcademicParser.overallGpa(parsed).isEmpty(),"单学期缓存不显示为全部学期绩点");
+        JSONObject allPayload=payload("","",new JSONArray().put(gradeRow("SYNTHETIC_OLD","90","4","4")).put(gradeRow("SYNTHETIC_NEW","60","2","1"))).put("allTerms",true);
+        JSONObject all=AcademicParser.parse("grades",allPayload,null);
+        check("3.00".equals(AcademicParser.overallGpa(all)),"全部学期按课程学分加权而非各学期算术平均");
+        check("全部学期".equals(all.getJSONObject("term").getString("label")),"全部学期具有明确范围");
+        JSONObject zero=payload("","",new JSONArray().put(gradeRow("SYNTHETIC_PASS","90","2","4"))
+            .put(new JSONObject().put("kcmc","SYNTHETIC_ZERO").put("xf","2").put("xfjd","0"))).put("allTerms",true);
+        check("2.00".equals(AcademicParser.overallGpa(AcademicParser.parse("grades",zero,null))),"零绩点课程计入分母");
+
+        JSONObject invalid=payload("","",new JSONArray().put(gradeRow("SYNTHETIC_FINITE","80","2","3"))
+            .put(gradeRow("SYNTHETIC_INVALID","80","Infinity","4"))).put("allTerms",true);
+        check("3.00".equals(AcademicParser.overallGpa(AcademicParser.parse("grades",invalid,null))),"无效学分不污染全部学期平均值");
+
         JSONObject fallback=payload("2025","12",new JSONArray().put(new JSONObject().put("kcmc","线性代数").put("zcj","75").put("xf","1").put("xfjd","2.8")));
         JSONObject odd=AcademicParser.parse("grades",fallback,null);
         check("75".equals(odd.getJSONArray("items").getJSONObject(0).getString("score")),"zcj 兜底成绩");

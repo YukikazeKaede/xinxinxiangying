@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const script = fs.readFileSync(path.join(__dirname, '../app/src/main/assets/academic-api.js'), 'utf8');
 const HOME = 'https://jwxt.sit.edu.cn/jwglxt/xtgl/index_initMenu.html';
-const GRADES = 'https://jwxt.sit.edu.cn/jwglxt/cjcx/cjcx_cxDgXscj.html';
+const GRADES = 'https://jwxt.sit.edu.cn/jwglxt/cjcx/cjcx_cxXsgrcj.html';
 const EXAMS = 'https://jwxt.sit.edu.cn/jwglxt/kwgl/kscx_cxXsksxxIndex.html';
 const cases = [];
 const test = (name, fn) => cases.push({name, fn});
@@ -50,6 +50,42 @@ async function settle(e, max = 40) {
   throw new Error('取数没有收敛：' + JSON.stringify(e.__xinxinAcademic));
 }
 
+test('all-term grades clear both term constraints and retain every returned term', async () => {
+  const e = env(HOME, {form: {xnm: {value: '2026'}, xqm: {value: '3'}}, body: () => ({items: [
+    {kcmc: 'SYNTHETIC_OLD', xnm: '2024', xqm: '12', xf: '4', jd: '4'},
+    {kcmc: 'SYNTHETIC_NEW', xnm: '2026', xqm: '3', xf: '2', jd: '2'}
+  ], totalResult: 2})});
+  run(e, {service: 'grades', endpoint: GRADES, allTerms: true});
+  const state = await settle(e), params = new URLSearchParams(e.calls[0].body);
+  assert.equal(state.allTerms, true);
+  assert.equal(params.get('xnm'), ''); assert.equal(params.get('xqm'), '');
+  assert.equal(state.items.length, 2);
+});
+
+test('all-term mode never removes the exam term and rejects truncated grade totals', async () => {
+  const exams = env(); run(exams, {service: 'exams', endpoint: EXAMS, allTerms: true});
+  assert.equal((await settle(exams)).allTerms, false);
+  assert.equal(new URLSearchParams(exams.calls[0].body).get('xnm'), '2026');
+  const large = env(HOME, {body: () => ({items: [{kcmc: 'SYNTHETIC_ONLY'}], totalResult: 601})});
+  run(large, {service: 'grades', endpoint: GRADES, allTerms: true});
+  assert.equal((await settle(large)).status, 'failed');
+});
+
+test('observed grade rows carry identity and actual page size, without xsxx', async () => {
+  const rows = Array.from({length: 26}, (_, i) => ({kcmc: 'SYNTHETIC_' + i, xh: 'SYNTHETIC_ACCOUNT', xm: 'SYNTHETIC_NAME'}));
+  const e = env(HOME, {body: n => ({items: rows.slice((n - 1) * 15, n * 15), totalResult: 26, showCount: 15})});
+  run(e, {service: 'grades', endpoint: GRADES, allTerms: true});
+  const state = await settle(e);
+  assert.equal(state.status, 'complete'); assert.equal(e.calls.length, 2);
+  assert.equal(state.items.length, 26); assert.equal(state.student.number, 'SYNTHETIC_ACCOUNT');
+});
+
+test('mixed account grade rows are never completed', async () => {
+  const e = env(HOME, {body: () => ({items: [{xh: 'SYNTHETIC_A'}, {xh: 'SYNTHETIC_B'}], totalResult: 2})});
+  run(e, {service: 'grades', endpoint: GRADES, allTerms: true});
+  assert.equal((await settle(e)).status, 'failed');
+});
+
 test('reads the grade list through the school query endpoint', async () => {
   const e = env(HOME, {body: () => ({items: [
     {kcmc: '高等数学', cj: '92', xf: '4.0', jd: '4.0', kcxzmc: '必修', jsxm: '张三'},
@@ -62,7 +98,7 @@ test('reads the grade list through the school query endpoint', async () => {
   assert.equal(state.items[0].kcmc, '高等数学');
   assert.deepEqual(Array.from(state.term ? [state.term.xnm, state.term.xqm] : []), ['2026', '3']);
   assert.equal(e.calls.length, 1);
-  assert.match(e.calls[0].target, /cjcx_cxDgXscj\.html\?doType=query&gnmkdm=N305005$/);
+  assert.match(e.calls[0].target, /cjcx_cxXsgrcj\.html\?doType=query&gnmkdm=N305005$/);
   assert.match(e.calls[0].body, /xnm=2026&xqm=3/);
   assert.match(e.calls[0].body, /queryModel\.showCount=100/);
   assert.equal(e.calls[0].credentials, 'same-origin');
@@ -154,7 +190,7 @@ test('refuses endpoints outside the two academic modules', async () => {  const 
 
 test('refuses a cross-origin endpoint', async () => {
   const e = env(HOME);
-  run(e, {service: 'grades', endpoint: 'https://example.com/jwglxt/cjcx/cjcx_cxDgXscj.html', gnmkdm: 'N305005'});
+  run(e, {service: 'grades', endpoint: 'https://example.com/jwglxt/cjcx/cjcx_cxXsgrcj.html', gnmkdm: 'N305005'});
   const state = await settle(e);
   assert.equal(state.status, 'failed');
   assert.equal(state.reason, 'blocked');
@@ -162,7 +198,7 @@ test('refuses a cross-origin endpoint', async () => {
 });
 
 test('stops when the page is not on the school academic host', async () => {
-  const e = env('https://example.com/jwglxt/cjcx/cjcx_cxDgXscj.html');
+  const e = env('https://example.com/jwglxt/cjcx/cjcx_cxXsgrcj.html');
   run(e, {service: 'grades', endpoint: GRADES, gnmkdm: 'N305005'});
   const state = await settle(e);
   assert.equal(state.status, 'failed');

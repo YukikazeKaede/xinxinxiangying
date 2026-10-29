@@ -74,103 +74,109 @@
         };
     }
 
-    /** 官方完整列表：先读取动态筛选字典，再顺序读取所有分页；失败不交付半份缓存。 */
+    /** 官方完整列表：先读取动态筛选字典，每次按需读取10条；只交付完整的一页。 */
     function readList() {
-        var xhr, started = Date.now(), pageSize = 10, maxPages = 200;
-        var filters = {}, scope = {}, selected = {}, names = Object.create(null);
-        var items = [], menus = [], seen = Object.create(null), menuSeen = Object.create(null);
-        var total = -1, pages = -1, received = 0;
-        state.pages = 0;
-        state.cancel = function () {
-            if (state.status !== 'pending') return;
-            state.status = 'cancelled';
-            if (xhr) xhr.abort();
-        };
+        var xhr, filters = {}, scope = {}, selected = {}, names = Object.create(null), blocks = [], menus = [];
+        var number = cfg.page === undefined ? 1 : Number(cfg.page), pageSize = 10;
+        state.cancel = function () { if (state.status === 'pending') { state.status = 'cancelled'; if (xhr) xhr.abort(); } };
         function active() { return window.__xinxinActs === state && state.status === 'pending'; }
-        function fetch(url, body, json, done) {
+        function fetch(url, body, done) {
             if (!active()) return;
-            if (Date.now() - started > 120000) { fail('timeout'); return; }
             var x = xhr = new XMLHttpRequest();
-            x.open('POST', url, true);
-            x.timeout = 15000;
-            x.setRequestHeader('Content-Type', json ? 'application/json;charset=UTF-8' : 'application/x-www-form-urlencoded; charset=UTF-8');
+            x.open('POST', url, true); x.timeout = 15000;
+            x.setRequestHeader('Content-Type', url.indexOf('/hdgl/list.zf') >= 0
+                ? 'application/x-www-form-urlencoded; charset=UTF-8' : 'application/json;charset=UTF-8');
             x.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
             x.onload = function () {
                 if (!active()) return;
                 if (x.status === 401 || x.status === 403) { fail('login'); return; }
                 if (x.status < 200 || x.status >= 300) { fail('list'); return; }
-                var answer;
-                try { answer = JSON.parse(x.responseText); } catch (e) { fail('list'); return; }
-                if (!answer || answer.code !== 0 || !answer.data) { fail('list'); return; }
-                try { done(answer.data); } catch (e) { fail('list'); }
+                try {
+                    var answer = JSON.parse(x.responseText);
+                    if (!answer || answer.code !== 0 || !answer.data) { fail('list'); return; }
+                    done(answer.data);
+                } catch (e) { fail('list'); }
             };
             x.onerror = x.ontimeout = function () { if (active()) fail('list'); };
             try { x.send(body); } catch (e) { if (active()) fail('list'); }
         }
         function integer(value) {
             if (typeof value !== 'number' && typeof value !== 'string' || clean(value) === '') return -1;
-            var n = Number(value);
-            return isFinite(n) && n >= 0 && Math.floor(n) === n ? n : -1;
+            var n = Number(value); return isFinite(n) && n >= 0 && Math.floor(n) === n ? n : -1;
         }
-        function page(number) {
-            var fields = {inputType: JSON.stringify({hdmc: [''], qthdlx: ['']}),
-                selectType: JSON.stringify(selected), inputSqlType: '2', orders: '[]',
-                showCount: String(pageSize), currentPage: String(number),
-                checkBoxType: '{}', dateType: '{}', numberType: '{}', all: '1'};
-            var body = Object.keys(fields).map(function (key) { return key + '=' + encodeURIComponent(fields[key]); }).join('&');
-            fetch('/zftal-xgxt-web/hdgl/list.zf', body, false, function (data) {
-                var count = integer(data.totalResult), size = integer(data.showCount), last = integer(data.totalPage);
-                if (!Array.isArray(data.items) || integer(data.currentPage) !== number || count < 0 || size <= 0 || size > 1000 || last < 0
-                    || (count > 0 && last !== Math.ceil(count / size)) || (count === 0 && last > 1)) { fail('list'); return; }
-                if (last > maxPages || count > 5000) { fail('limit'); return; }
-                if (total < 0) { total = count; pages = last; pageSize = size; }
-                else if (total !== count || pages !== last || pageSize !== size) { fail('changed'); return; }
-                if (data.items.length > size || data.items.length !== Math.min(size, Math.max(0, total - received))) { fail('changed'); return; }
-                var added = 0;
+        function dictionary(data) {
+            if (!data || !data.options || typeof data.options !== 'object') return [];
+            var out = [], seen = Object.create(null);
+            Object.keys(data.options).forEach(function (key) {
+                var bucket = data.options[key]; if (!Array.isArray(bucket)) return;
+                bucket.forEach(function (option) {
+                    var code = clean(option.value), name = clean(option.label);
+                    if (code && name && !seen[code]) { seen[code] = true; out.push({code: code, name: name}); }
+                });
+            });
+            out.sort(function (a, b) { return a.code < b.code ? -1 : a.code > b.code ? 1 : 0; });
+            return out;
+        }
+        function query() {
+            var conditions = cfg.conditions || {}, choices = {dldm: blocks, lbdm: menus, hdbmzt: filters.hdbmzt, hdsfjxz: filters.hdsfjxz || []};
+            var valid = true;
+            Object.keys(choices).forEach(function (key) {
+                var code = clean(conditions[key]); if (!code) return;
+                if (!choices[key].some(function (x) { return x.code === code; })) { valid = false; return; }
+                selected[key] = [code];
+            });
+            if (!valid) { fail('filters'); return; }
+            var criteria = {text: clean(cfg.search), conditions: {}};
+            Object.keys(choices).forEach(function (key) { criteria.conditions[key] = clean(conditions[key]); });
+            state.options = {source: 'school-list', filters: filters, scope: scope, blocks: blocks, menus: menus, groups: []};
+            var fields = {inputType: JSON.stringify({hdmc: [criteria.text], qthdlx: ['']}), selectType: JSON.stringify(selected),
+                inputSqlType: '0', orders: '[]', showCount: String(pageSize), currentPage: String(number),
+                checkBoxType: '{}', dateType: '{}', numberType: '{}', all: cfg.mine === true ? '0' : '1'};
+            fetch('/zftal-xgxt-web/hdgl/list.zf', Object.keys(fields).map(function (key) { return key + '=' + encodeURIComponent(fields[key]); }).join('&'), function (data) {
+                var total = integer(data.totalResult), size = integer(data.showCount), pages = integer(data.totalPage);
+                if (!Array.isArray(data.items) || integer(data.currentPage) !== number || total < 0 || size <= 0 || size > 10 || pages < 0
+                    || (total > 0 && pages !== Math.ceil(total / size)) || (total === 0 && pages > 1)) { fail('list'); return; }
+                if (number > 1 && (integer(cfg.expectedTotal) !== total || integer(cfg.pageSize) !== size)) { fail('changed'); return; }
+                if (data.items.length !== Math.min(size, Math.max(0, total - (number - 1) * size))) { fail('changed'); return; }
+                var items = [], seen = Object.create(null);
                 for (var i = 0; i < data.items.length; i++) {
                     var hit = data.items[i];
                     if (!hit || !clean(hit.id) || !clean(hit.hdmc)) { fail('list'); return; }
-                    var one = row(hit, '', '');
-                    one.year = one.year || scope.xn;
-                    one.term = one.term || scope.xq;
+                    var one = row(hit, '', ''); one.year = one.year || scope.xn; one.term = one.term || scope.xq;
                     one.schoolState = names[clean(hit.hdbmzt)] || '状态待核实';
-                    if (!seen[one.id]) { seen[one.id] = true; items.push(one); added++; }
-                    if (one.lbdm && one.lbmc && !menuSeen[one.lbdm]) {
-                        menuSeen[one.lbdm] = true; menus.push({code: one.lbdm, name: one.lbmc});
-                    }
+                    if (!seen[one.id]) { seen[one.id] = true; items.push(one); }
                 }
-                if (data.items.length && !added) { fail('changed'); return; }
-                received += data.items.length;
-                state.pages = number;
-                if (number < pages) { page(number + 1); return; }
-                if (received !== total) { fail('changed'); return; }
-                // 单个容器保留跨板块的官方返回顺序；不把活动重新按板块聚拢。
-                state.list = {source: 'school-list', filters: filters, scope: scope,
-                    menus: menus, groups: items.length ? [{name: '', code: '', items: items}] : []};
+                state.list = {source: 'school-list', filters: filters, scope: scope, blocks: blocks, menus: menus,
+                    mine: cfg.mine === true, query: criteria, page: number, pageSize: size, total: total, hasMore: number < pages,
+                    groups: items.length ? [{name: '', code: '', items: items}] : []};
                 state.status = 'complete';
             });
         }
-        fetch('/zftal-xgxt-web/gjcx/newList.zf', JSON.stringify({ymdz: 'hdgl/hdlb'}), true, function (data) {
-            if (!Array.isArray(data.conditionTypeList)) { fail('filters'); return; }
-            data.conditionTypeList.forEach(function (condition) {
-                if (!condition || ['xn', 'xq', 'hdbmzt'].indexOf(condition.value) < 0) return;
-                var options = condition.typeOption && condition.typeOption.options;
-                if (!Array.isArray(options)) return;
+        function configure(meta, categories) {
+            if (!Array.isArray(meta.conditionTypeList)) { fail('filters'); return; }
+            meta.conditionTypeList.forEach(function (condition) {
+                if (!condition || ['xn', 'xq', 'hdbmzt', 'hdsfjxz'].indexOf(condition.value) < 0) return;
+                var options = condition.typeOption && condition.typeOption.options; if (!Array.isArray(options)) return;
                 filters[condition.value] = options.map(function (option) { return {code: clean(option.value), name: clean(option.label)}; })
                     .filter(function (option) { return option.code && option.name; });
-                if (condition.value === 'hdbmzt') {
-                    filters.hdbmzt.forEach(function (option) { names[option.code] = option.name; });
-                    return;
-                }
-                var requested = cfg.filters && Object.prototype.hasOwnProperty.call(cfg.filters, condition.value)
-                    ? clean(cfg.filters[condition.value]) : clean((condition.defaultValue || [])[0]);
-                if (requested && !filters[condition.value].some(function (option) { return option.code === requested; })) return;
-                scope[condition.value] = requested;
-                if (requested) selected[condition.value] = [requested];
+                if (condition.value === 'hdbmzt') { filters.hdbmzt.forEach(function (x) { names[x.code] = x.name; }); return; }
+                if (condition.value === 'hdsfjxz') return;
+                var code = clean(cfg.filters && cfg.filters[condition.value]) || clean((condition.defaultValue || [])[0]);
+                if (!code || !filters[condition.value].some(function (x) { return x.code === code; })) return;
+                scope[condition.value] = code; selected[condition.value] = [code];
             });
-            if (!filters.xn || !filters.xq || !filters.hdbmzt || !filters.hdbmzt.length
-                || scope.xn === undefined || scope.xq === undefined) { fail('filters'); return; }
-            page(1);
+            blocks = dictionary(categories.dldm); menus = dictionary(categories.lbdm);
+            if (!filters.hdbmzt || !filters.hdbmzt.length || !scope.xn || !scope.xq || !blocks.length || !menus.length) { fail('filters'); return; }
+            query();
+        }
+        if (integer(number) !== number || number < 1 || number > 5000) return fail('list');
+        var cached = window.__xinxinActivityDictionary;
+        if ((number > 1 || cfg.reuseDictionary === true) && cached && Date.now() - cached.at < 300000) { configure(cached.meta, cached.categories); return; }
+        fetch('/zftal-xgxt-web/gjcx/newList.zf', JSON.stringify({ymdz: 'hdgl/hdlb'}), function (meta) {
+            fetch('/zftal-xgxt-web/ywdmgl/searchXsDllb2.zf', '{}', function (categories) {
+                window.__xinxinActivityDictionary = {at: Date.now(), meta: meta, categories: categories};
+                configure(meta, categories);
+            });
         });
     }
 

@@ -4,6 +4,7 @@
     var cfg = {};
     try { cfg = JSON.parse(plan || '{}'); } catch (e) { cfg = {}; }
     var service = cfg.service === 'exams' ? 'exams' : 'grades';
+    var allTerms = service === 'grades' && cfg.allTerms === true;
     var state = {status: 'pending', service: service, page: 0, pages: 1, items: []};
     window.__xinxinAcademic = state;
 
@@ -47,6 +48,7 @@
         var parts = ['xnm=' + term.xnm, 'xqm=' + term.xqm, '_search=false', 'nd=' + Date.now(),
             'queryModel.showCount=100', 'queryModel.currentPage=' + page,
             'queryModel.sortName=', 'queryModel.sortOrder=asc'];
+        if (service === 'grades') parts.push('sfzgcj=');
         if (service === 'exams') parts.push('ksmcdmb_id=', 'kch=', 'kcbmc=', 'ksrq=');
         return parts.join('&');
     }
@@ -77,11 +79,26 @@
             var rows = Array.isArray(data.items) ? data.items : (Array.isArray(data.rows) ? data.rows : []);
             if (!state.shape) state.shape = {keys: keysOf(data), total: String(data.totalResult || data.total || ''), row: keysOf(rows[0])};
             if (!state.keys) state.keys = keysOf(rows[0]);
-            for (var i = 0; i < rows.length; i++) state.items.push(rows[i]);
-            var total = parseInt(data.totalResult || data.total || '0', 10) || 0;
-            state.pages = Math.max(1, Math.ceil(Math.min(total, 600) / 100));
-            if (data.xsxx && !state.student) state.student = {name: data.xsxx.XM || '', number: data.xsxx.XH || ''};
+            for (var i = 0; i < rows.length; i++) {
+                var studentNumber = String(rows[i].xh || '').trim();
+                if (studentNumber) {
+                    if (state.student && state.student.number !== studentNumber) throw new Error('identity');
+                    if (!state.student) state.student = {name: String(rows[i].xm || '').trim(), number: studentNumber};
+                }
+                state.items.push(rows[i]);
+            }
+            var total = Number(data.totalResult || data.total || 0);
+            if (!isFinite(total) || total < 0 || total > 600 || total % 1 || ((total > 0 && rows.length === 0) || (total === 0 && rows.length > 0))) throw new Error('limit');
+            var size = Number(data.showCount || 100);
+            if (!isFinite(size) || size < 1 || size > 100 || size % 1 || (state.total !== undefined && state.total !== total)) throw new Error('limit');
+            state.total = total;
+            state.pages = Math.max(1, Math.ceil(total / size));
+            if (data.xsxx) {
+                if (state.student && data.xsxx.XH && state.student.number !== String(data.xsxx.XH)) throw new Error('identity');
+                if (!state.student) state.student = {name: data.xsxx.XM || '', number: data.xsxx.XH || ''};
+            }
             if (page < state.pages && state.items.length > 0) { run(endpoint, term, page + 1); return; }
+            if (total > 0 && state.items.length !== total) throw new Error('limit');
             finish('complete', state.items.length ? '' : 'empty');
         }).catch(function (error) {
             finish('failed', error && error.message === 'login' ? 'login' : 'http');
@@ -92,7 +109,8 @@
         var endpoint = new URL(cfg.endpoint || '', location.href);
         if (endpoint.origin !== location.origin) return finish('failed', 'blocked');
         if (!/^\/jwglxt\/(cjcx|kwgl)\//.test(endpoint.pathname)) return finish('failed', 'endpoint');
-        var term = pickTerm(cfg.term, cfg.explicitTerm);
+        var term = allTerms ? {xnm: '', xqm: ''} : pickTerm(cfg.term, cfg.explicitTerm);
+        state.allTerms = allTerms;
         if (!term) return finish('failed', 'no-term');
         state.term = term;
         var query = endpoint.href + (endpoint.search ? '&' : '?') + 'doType=query&gnmkdm=' + encodeURIComponent(cfg.gnmkdm || '');

@@ -196,6 +196,11 @@ public final class ActivityFeedTest {
         List<String> oldTypes = ActivityFeed.types(oldCache, oldItems, "德育");
         check(oldTypes.size() == 4 && "讲座报告".equals(oldTypes.get(0)), "旧缓存也能按类型代码补板块归属");
 
+        JSONObject pagedCatalog = new JSONObject().put("blocks", new JSONArray().put(new JSONObject().put("name", "劳育").put("code", "02")))
+            .put("groups", new JSONArray()).put("menus", menus);
+        check(ActivityFeed.blockCode(pagedCatalog, new JSONArray(), "劳育"), "02", "尚未载入活动的板块也使用官方分类代码");
+        check(ActivityFeed.types(pagedCatalog, new JSONArray(), "劳育").size() == 4, "分类筛选不局限于已加载的第一页");
+
         java.util.TimeZone previous = java.util.TimeZone.getDefault();
         try {
             java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"));

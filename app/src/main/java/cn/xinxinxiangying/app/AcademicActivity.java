@@ -61,6 +61,10 @@ public final class AcademicActivity extends Activity {
         JSONObject savedTerm=saved==null?null:saved.optJSONObject("term");
         termRow(savedTerm==null?"":savedTerm.optString("xnm",""),savedTerm==null?"":savedTerm.optString("xqm",""));
         if(saved==null||saved.optJSONArray("items")==null||saved.optJSONArray("items").length()==0){empty(saved);return;}
+        if("gpa".equals(service)&&(savedTerm==null||!"全部学期".equals(savedTerm.optString("label")))) {
+            Button all=CampusUi.button(this,"读取全部学期成绩",true,v->{selectedXnm=selectedXqm="";refresh();});
+            LinearLayout.LayoutParams allParams=new LinearLayout.LayoutParams(-1,dp(46));allParams.bottomMargin=dp(12);content.addView(all,allParams);
+        }
         JSONArray items=saved.optJSONArray("items");
         JSONObject term=saved.optJSONObject("term");
         String termLabel=term==null?"":term.optString("label","");
@@ -72,7 +76,7 @@ public final class AcademicActivity extends Activity {
     }
     /** 顶部学期行：显示当前查看的学期，点击可换到其它学期重新读取。 */
     private void termRow(String xnm,String xqm){
-        String label=termText(xnm,xqm);
+        String label="gpa".equals(service)&&xnm.isEmpty()&&xqm.isEmpty()?"全部学期":termText(xnm,xqm);
         LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setPadding(dp(16),dp(12),dp(14),dp(12));
         row.setBackground(CampusUi.ripple(this,Color.WHITE,12));
         TextView name=CampusUi.text(this,"学期  "+label,13,CampusUi.INK);row.addView(name,new LinearLayout.LayoutParams(0,-2,1));
@@ -97,6 +101,7 @@ public final class AcademicActivity extends Activity {
     private void chooseTerm(){
         final java.util.ArrayList<String> labels=new java.util.ArrayList<>();
         final java.util.ArrayList<String[]> values=new java.util.ArrayList<>();
+        if (!"exams".equals(service)) { labels.add("全部学期");values.add(new String[]{"",""}); }
         int start=Integer.parseInt(defaultTerm()[0]);
         for(int i=0;i<4;i++){
             int year=start-i;
@@ -143,7 +148,7 @@ public final class AcademicActivity extends Activity {
         // 只有学校真的给出绩点时才显示平均绩点；没有绩点字段就不显示这张卡。
         if(!gpa.isEmpty()){
             LinearLayout hero=CampusUi.column(this);hero.setPadding(dp(18),dp(18),dp(18),dp(18));hero.setBackground(CampusUi.shape(this,Color.WHITE,14));
-            TextView label=CampusUi.text(this,"全部课程平均学分绩点",12,CampusUi.MUTED);hero.addView(label);
+            TextView label=CampusUi.text(this,"全部学期".equals(term)?"全部学期平均学分绩点":"所选学期平均学分绩点",12,CampusUi.MUTED);hero.addView(label);
             TextView value=CampusUi.text(this,gpa,34,CampusUi.GREEN);value.setTypeface(null,Typeface.BOLD);value.setPadding(0,dp(4),0,0);hero.addView(value);
             StringBuilder sub=new StringBuilder("共 ").append(items.length()).append(" 门课程");
             if(!credit.isEmpty())sub.append(" · 总学分 ").append(credit);

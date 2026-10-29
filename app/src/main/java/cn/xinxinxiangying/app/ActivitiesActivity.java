@@ -52,7 +52,7 @@ public final class ActivitiesActivity extends Activity {
     private LinearLayout page, content, filterHost, listHost, webPage;
     private TextView status, webStatus, barName;
     private String statusBase = "";
-    private Button barAction;
+    private Button barAction, loadMoreButton;
     private boolean captureBar;
     private EditText search;
     private WebView web;
@@ -65,7 +65,12 @@ public final class ActivitiesActivity extends Activity {
     private boolean reading, signupSubmitted;
     private int generation;
     private int polls;
-    private boolean scopeLoaded, listRead;
+    private boolean scopeLoaded, listRead, hiddenList, optionsShown;
+    private JSONObject pendingOptions;
+    private ScrollView activityScroll;
+    private int requestedPage = 1;
+    private boolean loadMoreFailed, mine;
+    private final Runnable searchRequest = () -> loadList(true);
     private String term = "";
     private String plan = "";
     private JSONObject detail;
@@ -88,15 +93,20 @@ public final class ActivitiesActivity extends Activity {
         status = CampusUi.text(this, "", 11, CampusUi.MUTED);
         status.setPadding(dp(20), dp(2), dp(20), dp(8));
         page.addView(status);
-        ScrollView scroll = new ScrollView(this);
+        ScrollView scroll = activityScroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
+        scroll.setOnScrollChangeListener((v, x, y, oldX, oldY) -> {
+            if (y > oldY && !importing && !loadMoreFailed && scroll.getChildCount() > 0
+                && y >= scroll.getChildAt(0).getHeight() - scroll.getHeight() - dp(80)) loadNextPage();
+        });
         content = CampusUi.column(this);
         content.setPadding(dp(14), 0, dp(14), dp(20));
         scroll.addView(content);
         page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         setContentView(page);
         render();
+        handler.post(this::loadList);
     }
 
     private int dp(int value) { return CampusUi.dp(this, value); }
@@ -116,7 +126,11 @@ public final class ActivitiesActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        if (importing) { quitWeb(); return; }
+        if (importing) {
+            if (hiddenList && page.isShown()) { cancelRead(); generation++; importing = false; leave(); }
+            else quitWeb();
+            return;
+        }
         if (detail != null) { detail = null; setContentView(page); render(); return; }
         leave();
     }
@@ -184,7 +198,8 @@ public final class ActivitiesActivity extends Activity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void afterTextChanged(Editable s) {
                 query = s.toString().trim();
-                fillList();
+                handler.removeCallbacks(searchRequest);
+                handler.postDelayed(searchRequest, 350);
             }
         });
         box.addView(search, new LinearLayout.LayoutParams(0, dp(44), 1));
@@ -194,17 +209,34 @@ public final class ActivitiesActivity extends Activity {
         return box;
     }
 
+    private JSONObject visibleSnapshot() {
+        JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
+        return list != null && list.optBoolean("mine", false) == mine ? saved : null;
+    }
+
     private void render() {
-        JSONObject saved = store.read();
+        JSONObject saved = visibleSnapshot();
         if (barName != null) barName.setText("第二课堂活动");
         content.removeAllViews();
         filterHost = CampusUi.column(this);
         listHost = CampusUi.column(this);
+        LinearLayout tabs = new LinearLayout(this);
+        for (String label : new String[]{"所有活动", "我的活动"}) {
+            boolean personal = "我的活动".equals(label);
+            TextView tab = chip(label, mine == personal, v -> {
+                if (mine == personal) return;
+                mine = personal; detail = null; stateFilter = "";
+                loadList(true); render();
+            });
+            tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(42), 1));
+        }
+        content.addView(tabs);
         content.addView(searchBox());
         content.addView(filterHost);
         content.addView(listHost);
         if (saved == null) {
-            status.setText("");
+            status.setText("尚无本学期活动缓存");
+            filters(queryCatalog(), new JSONArray());
             empty();
             return;
         }
@@ -218,7 +250,9 @@ public final class ActivitiesActivity extends Activity {
         }
         JSONArray items = ActivityFeed.flatten(list);
         JSONArray visible = ActivityFeed.visible(items, System.currentTimeMillis());
-        statusBase = "本机保存 · " + when(savedAt) + " · 共 " + visible.length() + " 个活动";
+        statusBase = "本机保存 · " + when(savedAt) + (list != null && list.has("page")
+            ? " · 已加载 " + visible.length() + "/" + list.optInt("total", visible.length()) + " 个活动"
+            : " · 共 " + visible.length() + " 个活动");
         if (list == null || !"school-list".equals(list.optString("source"))) statusBase += " · 旧版概览，请重新读取完整列表";
         status.setText(statusBase);
         filters(list, visible);
@@ -228,6 +262,8 @@ public final class ActivitiesActivity extends Activity {
     /** 四个筛选行：学年、板块、类型、状态，与手机版页面的分类一致。类型按板块归属列出。 */
     private void filters(JSONObject list, JSONArray visible) {
         List<String> blocks = new ArrayList<>();
+        JSONArray blockOptions = list == null ? null : list.optJSONArray("blocks");
+        if (blockOptions != null) for (int i = 0; i < blockOptions.length(); i++) add(blocks, blockOptions.optJSONObject(i).optString("name"));
         for (int i = 0; i < visible.length(); i++) {
             JSONObject item = visible.optJSONObject(i);
             add(blocks, item.optString("dl", ""));
@@ -240,14 +276,13 @@ public final class ActivitiesActivity extends Activity {
         filterHost.addView(card, cardParams());
         scopeRow(card, list, "xn", "学年", year);
         scopeRow(card, list, "xq", "学期", term);
-        chipRow(card, "板块", blocks, block, value -> { block = value; type = ""; render(); });
-        chipRow(card, "类型", types, type, value -> { type = value; render(); });
-        List<String> states = new ArrayList<>();
+        chipRow(card, "板块", blocks, block, value -> { block = value; type = ""; loadList(true); });
+        chipRow(card, "类型", types, type, value -> { type = value; loadList(true); });
+        List<String> states = fixed("报名中", "无需报名", "已截止", "未开始", "已结束");
         JSONArray stateOptions = options(list, "hdbmzt");
-        if (stateOptions != null) for (int i = 0; i < stateOptions.length(); i++) add(states, stateOptions.optJSONObject(i).optString("name"));
-        if (states.isEmpty()) states = fixed("报名中", "无需报名", "已截止", "未开始", "已结束");
+        if (stateOptions != null) for (int i = 0; i < stateOptions.length(); i++) add(states, displayState(stateOptions.optJSONObject(i).optString("name")));
         chipRow(card, "状态", states, stateFilter,
-            value -> { stateFilter = value; render(); });
+            value -> { stateFilter = value; loadList(true); });
     }
 
     private static JSONArray options(JSONObject list, String key) {
@@ -266,7 +301,11 @@ public final class ActivitiesActivity extends Activity {
     private void scopeRow(LinearLayout card, JSONObject list, String key, String title, String code) {
         JSONArray values = options(list, key);
         List<String> names = new ArrayList<>();
-        if (values != null) for (int i = 0; i < values.length(); i++) add(names, values.optJSONObject(i).optString("name"));
+        if (values != null) for (int i = 0; i < values.length(); i++) {
+            String name = values.optJSONObject(i).optString("name");
+            if (!"xn".equals(key) || recentYear(name)) add(names, name);
+        }
+        if ("xn".equals(key)) Collections.sort(names, Collections.reverseOrder());
         chipRow(card, title, names, optionName(values, code), name -> {
             String value = "";
             if (values != null) for (int i = 0; i < values.length(); i++) {
@@ -274,8 +313,15 @@ public final class ActivitiesActivity extends Activity {
                 if (name.equals(option.optString("name"))) value = option.optString("code");
             }
             if ("xn".equals(key)) year = value; else term = value;
-            loadList();
-        });
+            loadList(true);
+        }, false);
+    }
+
+    static boolean recentYear(String label) {
+        if (label == null || !label.matches("\\d{4}-\\d{4}")) return false;
+        java.util.Calendar now = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Shanghai"));
+        int current = now.get(java.util.Calendar.YEAR) - (now.get(java.util.Calendar.MONTH) < 8 ? 1 : 0);
+        return Math.abs(Integer.parseInt(label.substring(0, 4)) - current) <= 1;
     }
 
     private List<String> fixed(String... values) {
@@ -290,13 +336,17 @@ public final class ActivitiesActivity extends Activity {
     }
 
     private void chipRow(LinearLayout card, String name, List<String> options, String selected, Pick pick) {
+        chipRow(card, name, options, selected, pick, true);
+    }
+
+    private void chipRow(LinearLayout card, String name, List<String> options, String selected, Pick pick, boolean includeAll) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(4), dp(8), dp(4));
         TextView label = CampusUi.text(this, name, 11, CampusUi.MUTED);
         row.addView(label, new LinearLayout.LayoutParams(dp(36), -2));
         // “全部”固定在滚动区外，选中具体类型或横向滚动时也始终可见。
-        row.addView(chip(ActivityFeed.NONE, selected == null || selected.isEmpty(), v -> pick.on("")));
+        if (includeAll) row.addView(chip(ActivityFeed.NONE, selected == null || selected.isEmpty(), v -> pick.on("")));
         HorizontalScrollView scroller = new HorizontalScrollView(this);
         scroller.setHorizontalScrollBarEnabled(false);
         LinearLayout chips = new LinearLayout(this);
@@ -322,8 +372,9 @@ public final class ActivitiesActivity extends Activity {
     }
 
     private void fillList() {
+        loadMoreButton = null;
         listHost.removeAllViews();
-        JSONObject saved = store.read();
+        JSONObject saved = visibleSnapshot();
         if (saved == null) return;
         JSONArray visible = ActivityFeed.visible(ActivityFeed.flatten(saved.optJSONObject("list")), System.currentTimeMillis());
         long now = System.currentTimeMillis();
@@ -348,7 +399,12 @@ public final class ActivitiesActivity extends Activity {
             listHost.addView(card, cardParams());
         }
         status.setText(statusBase + (shown != visible.length() ? " · 显示 " + shown + " 个" : ""));
-        TextView note = CampusUi.text(this, "按学校完整列表的顺序显示，不自动隐藏历史活动；学年与学期切换需联网读取。", 11, CampusUi.MUTED);
+        JSONObject list = saved.optJSONObject("list");
+        if (list != null && list.optBoolean("hasMore", false)) {
+            Button more = loadMoreButton = CampusUi.button(this, loadMoreFailed ? "加载失败，点击重试" : "下滑加载更多", false, v -> loadNextPage());
+            listHost.addView(more, new LinearLayout.LayoutParams(-1, dp(44)));
+        }
+        TextView note = CampusUi.text(this, "每次加载10条，下滑继续；默认本学期，其他学期按选择查询。", 11, CampusUi.MUTED);
         note.setGravity(Gravity.CENTER);
         note.setPadding(dp(6), dp(16), dp(6), dp(8));
         listHost.addView(note);
@@ -360,7 +416,7 @@ public final class ActivitiesActivity extends Activity {
         if (!block.isEmpty() && !block.equals(item.optString("dl", ""))) return false;
         if (!type.isEmpty() && !type.equals(item.optString("lb", ""))) return false;
         String current = ActivityFeed.state(item, now);
-        return stateFilter.isEmpty() || stateFilter.equals(current);
+        return stateFilter.isEmpty() || stateFilter.equals(displayState(current));
     }
 
     private View cardRow(JSONObject item, long now) {
@@ -374,7 +430,7 @@ public final class ActivitiesActivity extends Activity {
         name.setTypeface(null, Typeface.BOLD);
         name.setMaxLines(2);
         head.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
-        head.addView(badge(ActivityFeed.state(item, now)));
+        head.addView(badge(mine ? "已报名" : ActivityFeed.state(item, now)));
         row.addView(head);
         String span = ActivityFeed.span(item.optString("start", ""), item.optString("end", ""));
         if (!span.isEmpty()) {
@@ -404,7 +460,14 @@ public final class ActivitiesActivity extends Activity {
         return text.toString();
     }
 
+    private static String displayState(String state) {
+        if ("报名已截止".equals(state)) return "已截止";
+        if ("报名未开始".equals(state)) return "未开始";
+        return state;
+    }
+
     private TextView badge(String state) {
+        state = displayState(state);
         int color = "报名中".equals(state) ? CampusUi.GREEN
             : "未开始".equals(state) ? BLUE
             : "无需报名".equals(state) ? 0xff0f766e : GRAY;
@@ -474,20 +537,73 @@ public final class ActivitiesActivity extends Activity {
 
     private void refresh() {
         if (detail != null) { openDetail(detail.optString("id", "")); return; }
-        loadList();
+        loadList(true);
     }
 
     // ---- 学校页面：读列表、读详情、报名 ----
 
-    private void loadList() {
+    private void loadList() { loadList(false); }
+
+    private JSONObject queryCatalog() {
+        if (pendingOptions != null) return pendingOptions;
+        JSONObject saved = store.read();
+        return saved == null ? null : saved.optJSONObject("list");
+    }
+
+    private String optionCode(JSONArray choices, String name) {
+        if (choices != null) for (int i = 0; i < choices.length(); i++) {
+            JSONObject option = choices.optJSONObject(i);
+            if (option != null && name.equals(option.optString("name"))) return option.optString("code");
+        }
+        return "";
+    }
+
+    private void loadList(boolean selectedScope) {
         if (!AppSession.require(this, "second_activities")) return;
         try {
-            JSONObject request = new JSONObject().put("action", "list");
-            JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
-            if (scopeLoaded && list != null && "school-list".equals(list.optString("source")))
+            JSONObject request = new JSONObject().put("action", "list").put("page", 1).put("reuseDictionary", selectedScope).put("mine", mine);
+            JSONObject catalog = queryCatalog(), conditions = new JSONObject();
+            if (selectedScope && scopeLoaded && catalog != null && "school-list".equals(catalog.optString("source"))) {
                 request.put("filters", new JSONObject().put("xn", year).put("xq", term));
+                if (!block.isEmpty()) conditions.put("dldm", ActivityFeed.blockCode(catalog, ActivityFeed.flatten(catalog), block));
+                if (!type.isEmpty()) conditions.put("lbdm", optionCode(catalog.optJSONArray("menus"), type));
+                if (!stateFilter.isEmpty()) {
+                    String code = "";
+                    JSONArray choices = options(catalog, "hdbmzt");
+                    if (choices != null) for (int i = 0; i < choices.length(); i++) {
+                        JSONObject option = choices.optJSONObject(i);
+                        if (stateFilter.equals(displayState(option.optString("name")))) code = option.optString("code");
+                    }
+                    if (code.isEmpty()) {
+                        code = optionCode(options(catalog, "hdsfjxz"), stateFilter);
+                        if (code.isEmpty()) { Toast.makeText(this, "学校暂未提供此筛选条件", Toast.LENGTH_SHORT).show(); return; }
+                        conditions.put("hdsfjxz", code);
+                    } else conditions.put("hdbmzt", code);
+                }
+                request.put("search", query).put("conditions", conditions);
+            } else { query = block = type = stateFilter = ""; }
+            requestedPage = 1;
+            loadMoreFailed = false;
             openWeb(SchoolCatalog.DEKT_ACTIVITIES, request.toString(), false);
         } catch (Exception e) { Toast.makeText(this, "无法读取筛选条件，请重试", Toast.LENGTH_SHORT).show(); }
+    }
+
+    private void loadNextPage() {
+        if (importing || detail != null || !store.isCurrent()) return;
+        JSONObject saved = visibleSnapshot(), list = saved == null ? null : saved.optJSONObject("list");
+        if (list == null || !list.optBoolean("hasMore", false)) return;
+        try {
+            JSONObject criteria = list.optJSONObject("query");
+            if (criteria == null) return;
+            requestedPage = list.getInt("page") + 1;
+            JSONObject request = new JSONObject().put("action", "list").put("page", requestedPage)
+                .put("filters", list.getJSONObject("scope")).put("search", criteria.optString("text"))
+                .put("conditions", criteria.getJSONObject("conditions")).put("expectedTotal", list.getInt("total"))
+                .put("pageSize", list.getInt("pageSize")).put("mine", mine);
+            loadMoreFailed = false;
+            if (loadMoreButton != null) { loadMoreButton.setText("正在加载…"); loadMoreButton.setEnabled(false); }
+            openWeb(SchoolCatalog.DEKT_ACTIVITIES, request.toString(), false);
+        } catch (Exception e) { loadMoreFailed = true; }
     }
 
     private void openDetail(String id) {
@@ -506,20 +622,30 @@ public final class ActivitiesActivity extends Activity {
 
     private void openWeb(String url, String planJson, boolean keep) {
         if (!AppSession.require(this, "second_activities")) return;
+        cancelRead();
         importing = true;
         generation++;
         handler.removeCallbacksAndMessages(null);
         reading = signupSubmitted = false;
+        optionsShown = false;
         loginSubmitted = false;
         pendingTarget = url;
         browsing = keep;
         plan = planJson == null ? "" : planJson;
+        try { hiddenList = !keep && "list".equals(new JSONObject(plan).optString("action")); }
+        catch (Exception ignored) { hiddenList = false; }
         polls = 0;
         if (webPage == null) webPage = buildWeb();
-        webStatus.setText(browsing ? "学校页面已打开" : "正在复用学校登录状态…");
-        setContentView(webPage);
+        webMessage(browsing ? "学校页面已打开" : "正在复用学校登录状态…");
+        setContentView(hiddenList ? page : webPage);
         // 先走学工统一认证入口，已有 CAS 会话时不再要求输入账号密码。
-        web.loadUrl(SchoolCatalog.DEKT_SSO);
+        if (hiddenList && web.getUrl() != null && isXgPage(web.getUrl()) && !SessionPolicy.isLoginUrl(web.getUrl())) extractNow();
+        else web.loadUrl(SchoolCatalog.DEKT_SSO);
+    }
+
+    private void webMessage(String message) {
+        if (webStatus != null) webStatus.setText(message);
+        if (hiddenList && status != null) status.setText(message);
     }
 
     private static boolean isAuthPage(String url) {
@@ -544,11 +670,11 @@ public final class ActivitiesActivity extends Activity {
             web.evaluateJavascript(loginScript.replace("__CREDENTIALS__", credentials.toString()), value -> {
                 if (!active(token) || !isAuthPage(web.getUrl())) return;
                 String state = unquote(value);
-                if ("challenge".equals(state)) webStatus.setText("请完成学校验证码，完成后会自动继续");
+                if ("challenge".equals(state)) webMessage("请完成学校验证码，完成后会自动继续");
                 else if ("rejected".equals(state)) {
                     new SchoolAccount(this).forget(pg);
-                    webStatus.setText("保存的密码未通过，请在学校页面重新输入");
-                } else if ("submitted".equals(state)) webStatus.setText("正在验证学校账号…");
+                    webMessage("保存的密码未通过，请在学校页面重新输入");
+                } else if ("submitted".equals(state)) webMessage("正在验证学校账号…");
                 else if ("not-login".equals(state) || "needs-login".equals(state)) loginSubmitted = false;
             });
         } catch (Exception e) {
@@ -595,35 +721,40 @@ public final class ActivitiesActivity extends Activity {
                 CookieManager.getInstance().flush();
                 if (!importing || !store.isCurrent() || isFinishing() || !SchoolCatalog.isSchoolUrl(url) || !url.equals(view.getUrl())) return;
                 if (isAuthPage(url)) {
-                    webStatus.setText("请登录学校账号，登录后会自动回到第二课堂活动");
+                    if (hiddenList) setContentView(webPage);
+                    webMessage("请登录学校账号，登录后会自动回到第二课堂活动");
                     autoFillAuth();
                     return;
                 }
                 // 换票后先到学工首页，再打开用户本来要看的活动列表/详情。
+                // 列表只需同源会话，无需再加载活动概览及其中的跨学期推荐。
+                if (hiddenList && isXgPage(url) && !SessionPolicy.isLoginUrl(url)) pendingTarget = null;
                 if (pendingTarget != null) {
                     if (url.equals(pendingTarget)) pendingTarget = null;
                     else if (isXgPage(url) && SessionPolicy.isLoginUrl(url)) {
-                        webStatus.setText("请登录学校账号，登录后会自动回到第二课堂活动");
+                        if (hiddenList) setContentView(webPage);
+                        webMessage("请登录学校账号，登录后会自动回到第二课堂活动");
                         return;
                     } else if (isXgPage(url)) {
                         String target = pendingTarget;
                         pendingTarget = null;
-                        webStatus.setText("正在打开第二课堂活动…");
+                        webMessage("正在打开第二课堂活动…");
                         web.loadUrl(target);
                         return;
                     }
                 }
+                if (hiddenList) setContentView(page);
                 if (browsing) {
-                    webStatus.setText("学校页面已打开 · 报名请在学校页面上完成"); return;
+                    webMessage("学校页面已打开 · 报名请在学校页面上完成"); return;
                 }
                 if (!plan.isEmpty() && importing && !reading && !signupSubmitted) {
                     handler.postDelayed(ActivitiesActivity.this::extractNow, 800);
                 } else {
-                    webStatus.setText("请先登录学校账号，登录后再读取");
+                    webMessage("请先登录学校账号，登录后再读取");
                 }
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) webStatus.setText("连接学校页面失败 · 请确认在校园网内");
+                if (request.isForMainFrame()) webMessage("连接学校页面失败 · 请确认在校园网内");
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                 if (!request.isForMainFrame() || view != web || !importing || isFinishing() || isDestroyed()
@@ -632,13 +763,13 @@ public final class ActivitiesActivity extends Activity {
                 if (response.getStatusCode() >= 400 && pendingTarget != null && !current.equals(pendingTarget)) {
                     String target = pendingTarget;
                     pendingTarget = null;
-                    webStatus.setText("统一认证入口暂不可用，直接打开第二课堂活动…");
+                    webMessage("统一认证入口暂不可用，直接打开第二课堂活动…");
                     view.loadUrl(target);
                 }
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, android.net.http.SslError error) {
                 handler.cancel();
-                webStatus.setText("无法验证学校网站证书 · 已停止加载");
+                webMessage("无法验证学校网站证书 · 已停止加载");
             }
         });
         web.setWebChromeClient(new WebChromeClient());
@@ -649,13 +780,13 @@ public final class ActivitiesActivity extends Activity {
     private void extractNow() {
         if (web == null || !importing || browsing) return;
         if (reading) return;
-        if (signupSubmitted) { webStatus.setText("请先返回详情确认报名结果，再决定是否重试"); return; }
-        if (plan.isEmpty()) { webStatus.setText("这页不是活动页面 · 点“重新读取”"); return; }
-        if (script == null || script.isEmpty()) { webStatus.setText("读取脚本缺失，请安装完整版本"); return; }
+        if (signupSubmitted) { webMessage("请先返回详情确认报名结果，再决定是否重试"); return; }
+        if (plan.isEmpty()) { webMessage("这页不是活动页面 · 点“重新读取”"); return; }
+        if (script == null || script.isEmpty()) { webMessage("读取脚本缺失，请安装完整版本"); return; }
         String url = web.getUrl();
         if (url == null || !SchoolCatalog.isSchoolUrl(url)
             || !"xg.sit.edu.cn".equalsIgnoreCase(Uri.parse(url).getHost())) {
-            webStatus.setText("请先登录并打开第二课堂页面"); return;
+            webMessage("请先登录并打开第二课堂页面"); return;
         }
         if (!store.isCurrent()) return;
         reading = true;
@@ -668,7 +799,7 @@ public final class ActivitiesActivity extends Activity {
         catch (Exception e) { reading = false; return; }
         polls = 0;
         handler.removeCallbacksAndMessages(null);
-        webStatus.setText(listRead ? "正在读取完整活动列表…" : "正在读取这一页…");
+        webMessage(listRead ? "正在读取完整活动列表…" : "正在读取这一页…");
         String code = script.replace("__ACT_PLAN__", JSONObject.quote(plan));
         web.evaluateJavascript(code, null);
         handler.postDelayed(() -> poll(token), 600);
@@ -682,6 +813,10 @@ public final class ActivitiesActivity extends Activity {
             JSONObject state = null;
             if (!raw.isEmpty()) { try { state = new JSONObject(raw); } catch (Exception e) { state = null; } }
             if (state == null) { again(token); return; }
+            if (listRead && !optionsShown && state.optJSONObject("options") != null) {
+                optionsShown = true;
+                showOptions(state.optJSONObject("options"));
+            }
             String status = state.optString("status", "");
             if ("complete".equals(status)) {
                 String action = state.optString("action", "");
@@ -690,9 +825,20 @@ public final class ActivitiesActivity extends Activity {
                 return;
             }
             if ("failed".equals(status)) { failed(state.optString("reason", "")); return; }
-            if (listRead) webStatus.setText("正在读取完整活动列表 · 已读取 " + state.optInt("pages", 0) + " 页");
+            if (listRead) webMessage("正在更新所选学期 · 已读取 " + state.optInt("pages", 0) + " 页 · 暂显示原缓存");
             again(token);
         });
+    }
+
+    private void showOptions(JSONObject options) {
+        if (options == null || options.optJSONObject("scope") == null) return;
+        pendingOptions = options;
+        year = options.optJSONObject("scope").optString("xn", "");
+        term = options.optJSONObject("scope").optString("xq", "");
+        scopeLoaded = true;
+        filterHost.removeAllViews();
+        JSONObject saved = store.read();
+        filters(options, ActivityFeed.flatten(saved == null ? null : saved.optJSONObject("list")));
     }
 
     private void again(int token) {
@@ -708,35 +854,69 @@ public final class ActivitiesActivity extends Activity {
     private void failed(String reason) {
         cancelRead();
         reading = false;
-        if ("login".equals(reason)) webStatus.setText("学校登录状态已失效 · 请点右上角“刷新”重新验证，本机缓存不会丢失");
-        else if ("blocked".equals(reason)) webStatus.setText("只在学校页面内读取");
-        else if ("filters".equals(reason)) webStatus.setText("未读取到学校筛选字典，请稍后重试；原缓存保留");
-        else if ("changed".equals(reason)) webStatus.setText("读取期间学校列表发生变化，请重新读取；原缓存保留");
-        else if ("limit".equals(reason)) webStatus.setText("活动过多，请先在学校页面查看；未保存不完整列表");
-        else if ("timeout".equals(reason)) webStatus.setText("读取超时，请稍后重试；原缓存保留");
-        else if ("detail".equals(reason)) webStatus.setText("没有读到活动详情 · 请点“重新读取”");
-        else webStatus.setText("没有读到活动列表 · 请确认页面加载完成后再点“读取本页”");
+        if (listRead && requestedPage > 1) {
+            importing = false;
+            loadMoreFailed = true;
+            fillList();
+            status.setText("加载下一页失败，已加载活动保留；可点击重试");
+            return;
+        }
+        if (hiddenList && !"login".equals(reason)) {
+            importing = false;
+            pendingOptions = null;
+            scopeLoaded = false;
+            restoreQuery();
+            render();
+        }
+        if (hiddenList && "login".equals(reason)) setContentView(webPage);
+        if ("login".equals(reason)) webMessage("学校登录状态已失效 · 请点右上角“刷新”重新验证，本机缓存不会丢失");
+        else if ("blocked".equals(reason)) webMessage("只在学校页面内读取");
+        else if ("filters".equals(reason)) webMessage("未读取到学校筛选字典，请稍后重试；原缓存保留");
+        else if ("changed".equals(reason)) webMessage("读取期间学校列表发生变化，请重新读取；原缓存保留");
+        else if ("limit".equals(reason)) webMessage("活动过多，请先在学校页面查看；未保存不完整列表");
+        else if ("timeout".equals(reason)) webMessage("读取超时，请稍后重试；原缓存保留");
+        else if ("detail".equals(reason)) webMessage("没有读到活动详情 · 请点“重新读取”");
+        else webMessage("没有读到活动列表 · 请确认页面加载完成后再点“读取本页”");
     }
 
     private void onList(JSONObject state) {
         JSONObject list = state.optJSONObject("list");
-        if (list == null || !"school-list".equals(list.optString("source")) || list.optJSONArray("groups") == null) { failed("list"); return; }
+        if (list == null || list.optBoolean("mine", false) != mine || !"school-list".equals(list.optString("source")) || list.optJSONArray("groups") == null) { failed("list"); return; }
+        int oldY = activityScroll.getScrollY();
         try {
-            JSONObject snapshot = new JSONObject();
-            snapshot.put("savedAt", System.currentTimeMillis());
-            snapshot.put("list", list);
+            if (requestedPage > 1) {
+                JSONObject saved = store.read(), old = saved == null ? null : saved.optJSONObject("list");
+                if (old == null || old.optBoolean("mine", false) != list.optBoolean("mine", false) || old.optInt("page") + 1 != list.optInt("page") || list.optInt("page") != requestedPage
+                    || old.optInt("total") != list.optInt("total") || old.optInt("pageSize") != list.optInt("pageSize")
+                    || !old.getJSONObject("scope").getString("xn").equals(list.getJSONObject("scope").getString("xn"))
+                    || !old.getJSONObject("scope").getString("xq").equals(list.getJSONObject("scope").getString("xq"))
+                    || !old.getJSONObject("query").getString("text").equals(list.getJSONObject("query").getString("text"))) { failed("changed"); return; }
+                JSONObject before = old.getJSONObject("query").getJSONObject("conditions"), after = list.getJSONObject("query").getJSONObject("conditions");
+                for (String key : new String[]{"dldm", "lbdm", "hdbmzt", "hdsfjxz"})
+                    if (!before.optString(key).equals(after.optString(key))) { failed("changed"); return; }
+                JSONArray rows = old.getJSONArray("groups").getJSONObject(0).getJSONArray("items");
+                JSONArray nextGroups = list.getJSONArray("groups");
+                JSONArray next = nextGroups.length() == 0 ? new JSONArray() : nextGroups.getJSONObject(0).getJSONArray("items");
+                java.util.HashSet<String> seen = new java.util.HashSet<>();
+                for (int i = 0; i < rows.length(); i++) seen.add(rows.getJSONObject(i).optString("id"));
+                int added = 0;
+                for (int i = 0; i < next.length(); i++) if (seen.add(next.getJSONObject(i).optString("id"))) { rows.put(next.getJSONObject(i)); added++; }
+                if (next.length() > 0 && added == 0) { failed("changed"); return; }
+                list.put("groups", new JSONArray().put(new JSONObject().put("items", rows)));
+            }
+            JSONObject snapshot = new JSONObject().put("savedAt", System.currentTimeMillis()).put("list", list);
             store.save(snapshot);
-        } catch (Exception e) {
-            webStatus.setText("保存失败：" + e.getMessage());
-            return;
-        }
+        } catch (Exception e) { failed("list"); return; }
         importing = false;
         handler.removeCallbacksAndMessages(null);
         setContentView(page);
         detail = null;
+        pendingOptions = null;
         scopeLoaded = false;
         render();
-        Toast.makeText(this, "活动列表已更新", Toast.LENGTH_SHORT).show();
+        final int scrollY = requestedPage > 1 ? oldY : 0;
+        activityScroll.post(() -> activityScroll.scrollTo(0, scrollY));
+        if (requestedPage == 1) Toast.makeText(this, "活动列表已更新", Toast.LENGTH_SHORT).show();
     }
 
     private void onDetail(JSONObject state) {
@@ -787,8 +967,20 @@ public final class ActivitiesActivity extends Activity {
         }
     }
 
+    private void restoreQuery() {
+        JSONObject saved = store.read(), list = saved == null ? null : saved.optJSONObject("list");
+        mine = list != null && list.optBoolean("mine", false);
+        JSONObject criteria = list == null ? null : list.optJSONObject("query");
+        JSONObject conditions = criteria == null ? null : criteria.optJSONObject("conditions");
+        query = criteria == null ? "" : criteria.optString("text");
+        block = conditions == null ? "" : optionName(list.optJSONArray("blocks"), conditions.optString("dldm"));
+        type = conditions == null ? "" : optionName(list.optJSONArray("menus"), conditions.optString("lbdm"));
+        stateFilter = conditions == null ? "" : displayState(optionName(options(list,"hdbmzt"), conditions.optString("hdbmzt")));
+    }
+
     private void quitWeb() {
         cancelRead();
+        pendingOptions = null;
         scopeLoaded = false;
         generation++;
         reading = false;
@@ -797,7 +989,7 @@ public final class ActivitiesActivity extends Activity {
         importing = false;
         browsing = false;
         setContentView(page);
-        if (detail != null) renderDetail(); else render();
+        if (detail != null) renderDetail(); else { restoreQuery(); render(); }
     }
 
     // ---- 活动详情页 ----
@@ -902,7 +1094,7 @@ public final class ActivitiesActivity extends Activity {
         if (id.isEmpty()) return;
         openWeb(SchoolCatalog.DEKT_ACTIVITIES,
             action("signup", id), false);
-        webStatus.setText("正在提交报名…");
+        webMessage("正在提交报名…");
     }
 
     private static int ORANGE_RGB() { return 0xffb7791f; }
