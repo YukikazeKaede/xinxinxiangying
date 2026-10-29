@@ -625,6 +625,7 @@ public final class SchoolWebActivity extends Activity {
             if(term!=null)config.put("term",term);
             if(academicXnm.matches("\\d{4}")&&academicXqm.matches("\\d{1,2}"))
                 config.put("explicitTerm",new org.json.JSONObject().put("xnm",academicXnm).put("xqm",academicXqm));
+            config.put("allTerms",!"exams".equals(SchoolCatalog.academicKind(target))&&!config.has("explicitTerm"));
             plan=config.toString();
         }catch(org.json.JSONException e){if(syncAll)finishAcademicStage(target,"读取参数无法准备");else showImportError("读取参数无法准备");return;}
         web.evaluateJavascript(academicScript.replace("__ACADEMIC_PLAN__",org.json.JSONObject.quote(plan)),result->{

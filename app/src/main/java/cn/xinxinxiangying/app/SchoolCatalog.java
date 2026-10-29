@@ -20,6 +20,8 @@ public final class SchoolCatalog {
     public static final String GNMK_EXAMS = "N358105";
     /** 学生成绩/学分绩点查询接口。 */
     public static final String UG_GRADES = "https://jwxt.sit.edu.cn/jwglxt/cjcx/cjcx_cxDgXscj.html";
+    /** 成绩页实际发出的只读列表查询，页面入口与 JSON 接口分开。 */
+    public static final String UG_GRADES_JSON = "https://jwxt.sit.edu.cn/jwglxt/cjcx/cjcx_cxXsgrcj.html";
     public static final String GNMK_GRADES = "N305005";
     /** 第二课堂学分（活动学分）页面，与教务系统不是同一套地址。 */
     public static final String DEKT_HOME = "https://xg.sit.edu.cn/dektxf/xfqktj?redirect=%2F";
@@ -61,7 +63,7 @@ public final class SchoolCatalog {
         return "exams".equals(id) ? "exams" : "grades";
     }
     public static String academicEndpoint(String id) {
-        return "exams".equals(id) ? UG_EXAMS : UG_GRADES;
+        return "exams".equals(id) ? UG_EXAMS : UG_GRADES_JSON;
     }
     public static String academicGnmkdm(String id) {
         return "exams".equals(id) ? GNMK_EXAMS : GNMK_GRADES;

@@ -36,7 +36,7 @@ public final class SchoolCatalogTest {
         check("exams".equals(SchoolCatalog.academicKind("exams")),"Exam kind");
         check("grades".equals(SchoolCatalog.academicKind("grades"))&&"grades".equals(SchoolCatalog.academicKind("gpa")),"Grade kinds share one dataset");
         check(SchoolCatalog.UG_EXAMS.equals(SchoolCatalog.academicEndpoint("exams")),"Exam endpoint");
-        check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.academicEndpoint("gpa")),"GPA endpoint");
+        check(SchoolCatalog.UG_GRADES_JSON.equals(SchoolCatalog.academicEndpoint("gpa")),"GPA endpoint");
         check(SchoolCatalog.GNMK_EXAMS.startsWith("N")&&SchoolCatalog.GNMK_GRADES.startsWith("N")&&!SchoolCatalog.GNMK_EXAMS.equals(SchoolCatalog.GNMK_GRADES),"Module codes differ");
         System.out.println("PASS: "+count+" school-origin and routing assertions");
     }

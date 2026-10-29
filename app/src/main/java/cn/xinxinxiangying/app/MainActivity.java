@@ -73,6 +73,10 @@ public final class MainActivity extends Activity {
         caption.addView(text(summary,14,Color.WHITE));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(176)));gap(14);
         LinearLayout identity=panel(12);identity.setOrientation(LinearLayout.HORIZONTAL);identity.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout info=CampusUi.column(this);TextView school=text("我的校园",18,teal);school.setTypeface(null,Typeface.BOLD);info.addView(school);TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(0,dp(4),0,0);info.addView(student);identity.addView(info,new LinearLayout.LayoutParams(0,-2,1));Button change=CampusUi.button(this,"切换身份",false,v->selectProfile());identity.addView(change,new LinearLayout.LayoutParams(-2,dp(44)));gap(14);
+        LinearLayout statistics=panel(12);statistics.setOrientation(LinearLayout.HORIZONTAL);
+        org.json.JSONObject grades=new AcademicRepository(this).read("grades"), second=new DektStore(this).read();
+        statistic(statistics,AcademicParser.overallGpa(grades),"平均绩点",v->openService("gpa"));
+        statistic(statistics,second==null?"":second.optString("earned"),"第二课堂",v->openService("second"));gap(14);
         LinearLayout services=panel(12);
         serviceGrid(services,new String[]{"exams","gpa"},new String[]{"考试安排","学分绩点"},new int[]{0xff5986cf,0xffec956a});gap(18);
         LinearLayout dekt=panel(12);section(dekt,"第二课堂");
@@ -81,6 +85,15 @@ public final class MainActivity extends Activity {
         LinearLayout life=panel(12);section(life,"生活助手");serviceGrid(life,new String[]{"card","code","electricity"},new String[]{"校园卡","校园付款码","宿舍电费"},new int[]{0xff458ec7,0xffd5a34e,0xff62a481});gap(16);
         gap(20);TextView note=text("校园服务由学校系统提供",11,muted);note.setGravity(Gravity.CENTER);content.addView(note);
     }
+    private void statistic(LinearLayout parent,String value,String label,View.OnClickListener click){
+        LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(0,dp(10),0,dp(10));
+        TextView number=text(value.isEmpty()?"—":value,30,teal);number.setTypeface(null,Typeface.BOLD);number.setGravity(Gravity.CENTER);cell.addView(number);
+        TextView name=text(label,16,muted);name.setTypeface(null,Typeface.BOLD);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(6),0,0);cell.addView(name);
+        cell.setBackground(CampusUi.ripple(this,Color.WHITE,10));cell.setFocusable(true);
+        cell.setContentDescription(label+"，"+(value.isEmpty()?"尚未导入，点击读取":value));cell.setOnClickListener(click);
+        parent.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
+    }
+
     static String campusSummary(org.json.JSONObject doc,java.util.Calendar today){
         org.json.JSONArray courses=doc.optJSONArray("courses");if(courses==null||courses.length()==0)return "同步课表，查看今日课程";
         java.util.Calendar start=TimetableModel.date(doc.optString("startDate"));if(start==null)return "设置开学日期，查看本周与今日课程";

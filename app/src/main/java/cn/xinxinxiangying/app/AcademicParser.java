@@ -29,14 +29,15 @@ public final class AcademicParser {
 
     public static JSONObject parse(String service,JSONObject payload,JSONObject fallbackTerm) throws Exception {
         String kind="exams".equals(service)?"exams":"grades";
+        boolean all="grades".equals(kind)&&payload.optBoolean("allTerms",false);
         JSONObject term=new JSONObject();
         String xnm=payload.optJSONObject("term")==null?"":payload.optJSONObject("term").optString("xnm","");
         String xqm=payload.optJSONObject("term")==null?"":payload.optJSONObject("term").optString("xqm","");
-        if(xnm.isEmpty()&&fallbackTerm!=null)xnm=fallbackTerm.optString("xnm","");
-        if(xqm.isEmpty()&&fallbackTerm!=null)xqm=fallbackTerm.optString("xqm","");
-        if(!xnm.matches("\\d{4}"))throw new IllegalArgumentException("学校没有返回学年信息，请重新导入");
-        if(!xqm.matches("\\d{1,2}"))throw new IllegalArgumentException("学校没有返回学期信息，请重新导入");
-        term.put("xnm",xnm).put("xqm",xqm).put("label",label(xnm,xqm));
+        if(!all&&xnm.isEmpty()&&fallbackTerm!=null)xnm=fallbackTerm.optString("xnm","");
+        if(!all&&xqm.isEmpty()&&fallbackTerm!=null)xqm=fallbackTerm.optString("xqm","");
+        if(!all&&!xnm.matches("\\d{4}"))throw new IllegalArgumentException("学校没有返回学年信息，请重新导入");
+        if(!all&&!xqm.matches("\\d{1,2}"))throw new IllegalArgumentException("学校没有返回学期信息，请重新导入");
+        term.put("xnm",all?"":xnm).put("xqm",all?"":xqm).put("label",all?"全部学期":label(xnm,xqm));
         JSONArray rows=payload.optJSONArray("items");
         if(rows==null)rows=new JSONArray();
         JSONArray items=new JSONArray();
@@ -60,6 +61,13 @@ public final class AcademicParser {
         if(kind.equals("grades"))out.put("summary",summary(items));
         return out;
     }
+    /** 单学期缓存不能冒充全部学期平均值。旧缓存仍可查看，但需刷新后显示总绩点。 */
+    public static String overallGpa(JSONObject saved){
+        JSONObject term=saved==null?null:saved.optJSONObject("term"), summary=saved==null?null:saved.optJSONObject("summary");
+        return term!=null&&"全部学期".equals(term.optString("label"))&&term.optString("xnm").isEmpty()
+            &&term.optString("xqm").isEmpty()&&summary!=null?summary.optString("gpa",""):"";
+    }
+
     private static JSONObject grade(JSONObject row)throws Exception{
         String course=text(row,"kcmc","kcbmc","kcmcZh");
         if(course.isEmpty())return null;
@@ -78,7 +86,7 @@ public final class AcademicParser {
         String point=text(row,"jd");
         if(!point.isEmpty())return point;
         double total=parse(row.optString("xfjd","")),credit=parse(row.optString("xf",""));
-        if(total<=0)return "";
+        if(Double.isNaN(total)||Double.isInfinite(total)||total<0)return "";
         if(credit>0){
             double each=total/credit;
             // 折算结果落在 0—5 之间才当成总绩点，否则 xfjd 本身就是单科绩点。
@@ -113,11 +121,11 @@ public final class AcademicParser {
         for(int i=0;i<items.length();i++){
             JSONObject item=items.getJSONObject(i);
             double credit=parse(item.optString("credit",""));
-            if(!Double.isNaN(credit))credits+=credit;
+            if(!Double.isNaN(credit)&&credit>0)credits+=credit;
             double score=parse(item.optString("score",""));
-            if(!Double.isNaN(score)){scored++;if(!Double.isNaN(credit)){weightedScore+=score*credit;scoreCredits+=credit;}}
+            if(!Double.isNaN(score)){scored++;if(!Double.isNaN(credit)&&credit>0){weightedScore+=score*credit;scoreCredits+=credit;}}
             double point=parse(item.optString("point",""));
-            if(!Double.isNaN(point)){pointed++;if(!Double.isNaN(credit)){weightedPoint+=point*credit;pointCredits+=credit;}}
+            if(!Double.isNaN(point)&&point>=0&&point<=5){pointed++;if(!Double.isNaN(credit)&&credit>0){weightedPoint+=point*credit;pointCredits+=credit;}}
         }
         JSONObject summary=new JSONObject();
         summary.put("count",items.length()).put("credit",fixed(credits));
@@ -128,7 +136,7 @@ public final class AcademicParser {
     }
     private static double parse(String value){
         if(value==null||value.trim().isEmpty())return Double.NaN;
-        try{return Double.parseDouble(value.trim().replace("%",""));}catch(NumberFormatException e){return Double.NaN;}
+        try{double n=Double.parseDouble(value.trim().replace("%",""));return Double.isInfinite(n)?Double.NaN:n;}catch(NumberFormatException e){return Double.NaN;}
     }
     public static String label(String xnm,String xqm){
         int year;
