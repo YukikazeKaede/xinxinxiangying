@@ -18,7 +18,7 @@ public final class ActivityFeedTest {
         if (!expected.equals(actual)) throw new AssertionError(message + " → " + actual);
     }
 
-    private static JSONObject item(String id, String name, String start, String end, String signupStart, String signupEnd, boolean top) {
+    private static JSONObject item(String id, String name, String start, String end, String signupStart, String signupEnd, boolean top) throws Exception {
         JSONObject row = new JSONObject();
         row.put("id", id);
         row.put("name", name);
@@ -80,17 +80,29 @@ public final class ActivityFeedTest {
         check("已结束".equals(ActivityFeed.state(item("A5", "x", "2026-10-01 13:00:00", "2026-10-02 16:00:00",
                 "2026-09-01 09:00:00", "2026-09-20 18:00:00", false), now)), "已经结束的活动");
 
-        // 一年前结束的活动会被丢掉，一个月内的保留；置顶排最前。
+        // 历史活动和置顶活动均按学校给出的列表顺序保留。
         JSONArray mixed = new JSONArray();
         mixed.put(item("OLD", "旧活动", "2025-03-01 10:00:00", "2025-03-01 12:00:00", "", "", false));
         mixed.put(item("NEW", "新活动", "2026-11-05 10:00:00", "2026-11-05 12:00:00", "", "", false));
         mixed.put(item("PIN", "置顶活动", "2026-10-30 10:00:00", "2026-10-30 12:00:00", "", "", true));
         mixed.put(item("EDGE", "刚结束", "2026-09-27 10:00:00", "2026-09-27 12:00:00", "", "", false));
         JSONArray kept = ActivityFeed.visible(mixed, now);
-        check(kept.length() == 3, "结束超过一个月的活动应被隐藏");
-        check("PIN".equals(kept.getJSONObject(0).getString("id")), "置顶活动排最前");
-        check("NEW".equals(kept.getJSONObject(1).getString("id")), "其余按开始时间从新到旧");
-        check("EDGE".equals(kept.getJSONObject(2).getString("id")), "一个月内结束的仍显示");
+        check(kept.length() == 4, "不隐式过滤学校返回的历史活动");
+        check("OLD".equals(kept.getJSONObject(0).getString("id")), "保留学校顺序，包括旧活动");
+        check("NEW".equals(kept.getJSONObject(1).getString("id")), "不自行按活动时间重排");
+        check("PIN".equals(kept.getJSONObject(2).getString("id")), "不自行将置顶记录移到前面");
+        check("EDGE".equals(kept.getJSONObject(3).getString("id")), "学校返回的活动全部保留");
+
+        JSONObject official = item("SYNTHETIC_OFFICIAL", "SYNTHETIC_ACTIVITY", "2000-01-01", "2000-01-02", "", "", false);
+        official.put("schoolState", "报名已满").put("year", "2098-2099").put("term", "SYNTHETIC_TERM");
+        check(ActivityFeed.state(official, now), "报名已满", "学校状态优先，不用活动时间覆盖");
+        official.put("schoolState", "状态待核实");
+        check(ActivityFeed.state(official, now), "状态待核实", "未知状态不误标为无需报名");
+        JSONArray officialFlat = ActivityFeed.flatten(new JSONObject().put("groups", new JSONArray().put(
+            new JSONObject().put("items", new JSONArray().put(official)))));
+        check(officialFlat.getJSONObject(0).optString("year"), "2098-2099", "保留学校归属学年而不是按开始日期推算");
+        check(officialFlat.getJSONObject(0).optString("term"), "SYNTHETIC_TERM", "保留学校学期代码");
+        check(officialFlat.getJSONObject(0).optString("schoolState"), "状态待核实", "压平列表保留学校状态");
 
         check("2026-2027".equals(ActivityFeed.year("2026-10-13 18:30:00")), "9 月以后算新学年");        check("2025-2026".equals(ActivityFeed.year("2026-03-01 10:00:00")), "3 月仍属上一学年");
         check("".equals(ActivityFeed.year("")), "空时间没有学年");

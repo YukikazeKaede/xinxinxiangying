@@ -4,6 +4,7 @@
 (function (plan) {
     var cfg = {};
     try { cfg = JSON.parse(plan || '{}'); } catch (e) { cfg = {}; }
+    if (window.__xinxinActs && typeof window.__xinxinActs.cancel === 'function') window.__xinxinActs.cancel();
     var state = window.__xinxinActs = {
         status: 'pending', reason: '', action: cfg.action || '', list: null, detail: null, signup: null
     };
@@ -68,31 +69,109 @@
             end: clean(hit.hdjssj),
             signupStart: clean(hit.hdbmkssj),
             signupEnd: clean(hit.hdbmjzsj),
-            top: clean(hit.zdzt) === '1'
+            top: clean(hit.zdzt) === '1',
+            year: clean(hit.xn), term: clean(hit.xq), schoolState: ''
         };
     }
 
+    /** 官方完整列表：先读取动态筛选字典，再顺序读取所有分页；失败不交付半份缓存。 */
     function readList() {
-        var answer = request('POST', '/zftal-xgxt-web/hdgl/getHdgcHdList.zf', 'currentPage=1&showCount=300');
-        if (!answer || answer.code !== 0 || !answer.data || !Array.isArray(answer.data.resultList)) return null;
-        var data = answer.data || {};
-        var menus = [];
-        (data.menuList || []).forEach(function (menu) {
-            menus.push({ code: clean(menu.lbdm), name: clean(menu.lbmc) });
-        });
-        var groups = [];
-        (data.resultList || []).forEach(function (group) {
-            var items = [];
-            var groupCode = clean(group.dldm);
-            (group.lblist || []).forEach(function (label) {
-                (label.hdlist || []).forEach(function (hit) {
-                    var one = row(hit, group.dlmc, groupCode);
-                    if (one.id && one.name) items.push(one);
-                });
+        var xhr, started = Date.now(), pageSize = 10, maxPages = 200;
+        var filters = {}, scope = {}, selected = {}, names = Object.create(null);
+        var items = [], menus = [], seen = Object.create(null), menuSeen = Object.create(null);
+        var total = -1, pages = -1, received = 0;
+        state.pages = 0;
+        state.cancel = function () {
+            if (state.status !== 'pending') return;
+            state.status = 'cancelled';
+            if (xhr) xhr.abort();
+        };
+        function active() { return window.__xinxinActs === state && state.status === 'pending'; }
+        function fetch(url, body, json, done) {
+            if (!active()) return;
+            if (Date.now() - started > 120000) { fail('timeout'); return; }
+            var x = xhr = new XMLHttpRequest();
+            x.open('POST', url, true);
+            x.timeout = 15000;
+            x.setRequestHeader('Content-Type', json ? 'application/json;charset=UTF-8' : 'application/x-www-form-urlencoded; charset=UTF-8');
+            x.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+            x.onload = function () {
+                if (!active()) return;
+                if (x.status === 401 || x.status === 403) { fail('login'); return; }
+                if (x.status < 200 || x.status >= 300) { fail('list'); return; }
+                var answer;
+                try { answer = JSON.parse(x.responseText); } catch (e) { fail('list'); return; }
+                if (!answer || answer.code !== 0 || !answer.data) { fail('list'); return; }
+                try { done(answer.data); } catch (e) { fail('list'); }
+            };
+            x.onerror = x.ontimeout = function () { if (active()) fail('list'); };
+            try { x.send(body); } catch (e) { if (active()) fail('list'); }
+        }
+        function integer(value) {
+            if (typeof value !== 'number' && typeof value !== 'string' || clean(value) === '') return -1;
+            var n = Number(value);
+            return isFinite(n) && n >= 0 && Math.floor(n) === n ? n : -1;
+        }
+        function page(number) {
+            var fields = {inputType: JSON.stringify({hdmc: [''], qthdlx: ['']}),
+                selectType: JSON.stringify(selected), inputSqlType: '2', orders: '[]',
+                showCount: String(pageSize), currentPage: String(number),
+                checkBoxType: '{}', dateType: '{}', numberType: '{}', all: '1'};
+            var body = Object.keys(fields).map(function (key) { return key + '=' + encodeURIComponent(fields[key]); }).join('&');
+            fetch('/zftal-xgxt-web/hdgl/list.zf', body, false, function (data) {
+                var count = integer(data.totalResult), size = integer(data.showCount), last = integer(data.totalPage);
+                if (!Array.isArray(data.items) || integer(data.currentPage) !== number || count < 0 || size <= 0 || size > 1000 || last < 0
+                    || (count > 0 && last !== Math.ceil(count / size)) || (count === 0 && last > 1)) { fail('list'); return; }
+                if (last > maxPages || count > 5000) { fail('limit'); return; }
+                if (total < 0) { total = count; pages = last; pageSize = size; }
+                else if (total !== count || pages !== last || pageSize !== size) { fail('changed'); return; }
+                if (data.items.length > size || data.items.length !== Math.min(size, Math.max(0, total - received))) { fail('changed'); return; }
+                var added = 0;
+                for (var i = 0; i < data.items.length; i++) {
+                    var hit = data.items[i];
+                    if (!hit || !clean(hit.id) || !clean(hit.hdmc)) { fail('list'); return; }
+                    var one = row(hit, '', '');
+                    one.year = one.year || scope.xn;
+                    one.term = one.term || scope.xq;
+                    one.schoolState = names[clean(hit.hdbmzt)] || '状态待核实';
+                    if (!seen[one.id]) { seen[one.id] = true; items.push(one); added++; }
+                    if (one.lbdm && one.lbmc && !menuSeen[one.lbdm]) {
+                        menuSeen[one.lbdm] = true; menus.push({code: one.lbdm, name: one.lbmc});
+                    }
+                }
+                if (data.items.length && !added) { fail('changed'); return; }
+                received += data.items.length;
+                state.pages = number;
+                if (number < pages) { page(number + 1); return; }
+                if (received !== total) { fail('changed'); return; }
+                // 单个容器保留跨板块的官方返回顺序；不把活动重新按板块聚拢。
+                state.list = {source: 'school-list', filters: filters, scope: scope,
+                    menus: menus, groups: items.length ? [{name: '', code: '', items: items}] : []};
+                state.status = 'complete';
             });
-            groups.push({ name: clean(group.dlmc), code: groupCode, items: items });
+        }
+        fetch('/zftal-xgxt-web/gjcx/newList.zf', JSON.stringify({ymdz: 'hdgl/hdlb'}), true, function (data) {
+            if (!Array.isArray(data.conditionTypeList)) { fail('filters'); return; }
+            data.conditionTypeList.forEach(function (condition) {
+                if (!condition || ['xn', 'xq', 'hdbmzt'].indexOf(condition.value) < 0) return;
+                var options = condition.typeOption && condition.typeOption.options;
+                if (!Array.isArray(options)) return;
+                filters[condition.value] = options.map(function (option) { return {code: clean(option.value), name: clean(option.label)}; })
+                    .filter(function (option) { return option.code && option.name; });
+                if (condition.value === 'hdbmzt') {
+                    filters.hdbmzt.forEach(function (option) { names[option.code] = option.name; });
+                    return;
+                }
+                var requested = cfg.filters && Object.prototype.hasOwnProperty.call(cfg.filters, condition.value)
+                    ? clean(cfg.filters[condition.value]) : clean((condition.defaultValue || [])[0]);
+                if (requested && !filters[condition.value].some(function (option) { return option.code === requested; })) return;
+                scope[condition.value] = requested;
+                if (requested) selected[condition.value] = [requested];
+            });
+            if (!filters.xn || !filters.xq || !filters.hdbmzt || !filters.hdbmzt.length
+                || scope.xn === undefined || scope.xq === undefined) { fail('filters'); return; }
+            page(1);
         });
-        return { menus: menus, groups: groups };
     }
 
     function readDetail(id) {
@@ -193,10 +272,7 @@
             state.status = 'complete';
             return 'started';
         }
-        var list = readList();
-        if (!list) return fail('list');
-        state.list = list;
-        state.status = 'complete';
+        readList();
         return 'started';
     }
 

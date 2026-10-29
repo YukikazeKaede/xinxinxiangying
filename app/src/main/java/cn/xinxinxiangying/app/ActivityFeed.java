@@ -13,8 +13,6 @@ import java.util.TimeZone;
 
 /** 第二课堂活动的整理规则：时间、状态、筛选与排序；与界面无关，便于单元测试。 */
 public final class ActivityFeed {
-    /** 结束超过这么多天的活动不再列出：用户只关心还能参加或刚结束的。 */
-    public static final long KEEP = 31L * 24 * 60 * 60 * 1000;
     public static final String NONE = "全部";
 
     private ActivityFeed() { }
@@ -48,6 +46,9 @@ public final class ActivityFeed {
                     item.put("signupStart", row.optString("signupStart", ""));
                     item.put("signupEnd", row.optString("signupEnd", ""));
                     item.put("top", row.optBoolean("top", false));
+                    item.put("year", row.optString("year", ""));
+                    item.put("term", row.optString("term", ""));
+                    item.put("schoolState", row.optString("schoolState", ""));
                 } catch (Exception e) {
                     continue;
                 }
@@ -119,24 +120,16 @@ public final class ActivityFeed {
         return out;
     }
 
-    /** 去掉结束超过一个月的活动，置顶的排前面，其余按开始时间从新到旧。 */
+    /** 保留学校列表的活动与顺序，不按本机时间隐藏历史活动或重新排序。 */
     public static JSONArray visible(JSONArray items, long now) {
         List<JSONObject> kept = new ArrayList<>();
         if (items != null) {
             for (int i = 0; i < items.length(); i++) {
                 JSONObject item = items.optJSONObject(i);
                 if (item == null) continue;
-                long end = time(item.optString("end", ""));
-                if (end > 0 && now - end > KEEP) continue;
                 kept.add(item);
             }
         }
-        java.util.Collections.sort(kept, (left, right) -> {
-            boolean a = left.optBoolean("top", false), b = right.optBoolean("top", false);
-            if (a != b) return a ? -1 : 1;
-            long one = time(right.optString("start", "")), two = time(left.optString("start", ""));
-            return Long.compare(one, two);
-        });
         JSONArray out = new JSONArray();
         for (JSONObject item : kept) out.put(item);
         return out;
@@ -145,6 +138,8 @@ public final class ActivityFeed {
     /** 报名状态：已结束 / 已截止 / 报名中 / 未开始 / 无需报名。 */
     public static String state(JSONObject item, long now) {
         if (item == null) return "已结束";
+        String official = item.optString("schoolState", "");
+        if (!official.isEmpty()) return official;
         long end = time(item.optString("end", ""));
         long signupStart = time(item.optString("signupStart", ""));
         long signupEnd = time(item.optString("signupEnd", ""));
@@ -155,7 +150,7 @@ public final class ActivityFeed {
         return "报名中";
     }
 
-    /** 学年：9 月以后算新学年，例如 2026-10-13 属于 2026-2027。 */
+    /** 旧数据兼容用；官方筛选必须使用学校字典，不能用活动日期推算。 */
     public static String year(String start) {
         long value = time(start);
         if (value <= 0) return "";
