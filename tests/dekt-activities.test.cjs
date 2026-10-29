@@ -10,16 +10,23 @@ const cases = [];
 const test = (name, fn) => cases.push({name, fn});
 
 function env(url, routes, options) {
-  const calls = [];
+  const calls = [], pending = [];
   class XHR {
-    open(method, target) { this.method = method; this.target = target; this.headers = {}; }
+    open(method, target, async) { this.method = method; this.target = target; this.async = async; this.headers = {}; }
+    abort() { this.aborted = true; }
     setRequestHeader(key, value) { this.headers[key] = value; }
     send(body) {
       calls.push({method: this.method, target: this.target, body: body, headers: this.headers});
-      const answer = routes(this.method, this.target);
-      if (answer === null || answer === undefined) { this.status = 404; this.responseText = ''; return; }
-      this.status = 200;
-      this.responseText = JSON.stringify(answer);
+      const answer = this.target.endsWith('/gjcx/newList.zf') && !(options && options.customMetadata)
+        ? metadata() : routes(this.method, this.target, body);
+      const deliver = () => {
+        if (this.aborted) return;
+        if (answer && answer.event) { if (this['on' + answer.event]) this['on' + answer.event](); return; }
+        this.status = answer && answer.httpStatus || (answer == null ? 404 : 200);
+        this.responseText = JSON.stringify(answer);
+        if (this.async && this.onload) this.onload();
+      };
+      if (this.async && options && options.defer) pending.push(deliver); else deliver();
     }
   }
   const form = options && options.login ? {value: 'x'} : null;
@@ -29,7 +36,7 @@ function env(url, routes, options) {
   };
   const e = {
     XMLHttpRequest: XHR, JSON, Date, Math, String, Number,
-    location: new URL(url), document: d, calls
+    location: new URL(url), document: d, calls, pending, flush() { while (pending.length) pending.shift()(); }
   };
   e.window = e;
   return vm.createContext(e);
@@ -41,55 +48,128 @@ function run(e, plan) {
   return vm.runInContext(source, e);
 }
 
-function listAnswer() {
-  return {
-    msg: '操作成功', code: 0, data: {
-      menuList: [{lbdm: '0101', lbmc: '讲座报告'}, {lbdm: '0104', lbmc: '志愿公益'}],
-      resultList: [{
-        dlmc: '德育', dldm: '01', lblist: [{
-          lbmc: '志愿公益', lbdm: '0104', hdlist: [
-            {id: 'A1', hdmc: '图书馆志愿服务', lbdm: '0104', lbmc: '志愿公益', dlmc: '德育', dldm: '01',
-              zbfmc: '团委', zbf: '110700', xmmc: '天天讲', ssxm: '29A24BDD',
-              hdkssj: '2026-11-01 13:00:00', hdjssj: '2026-11-01 16:00:00',
-              hdbmkssj: '2026-10-20 09:00:00', hdbmjzsj: '2026-10-31 18:00:00', zdzt: '0'},
-            {id: 'A2', hdmc: '旧活动', lbdm: '0101', lbmc: '讲座报告', dlmc: '德育', dldm: '01',
-              zbfmc: '团委', hdkssj: '2025-03-01 10:00:00', hdjssj: '2025-03-01 12:00:00', zdzt: '1'}
-          ]
-        }]
-      }]
-    }
-  };
+function metadata() {
+  return {code: 0, data: {conditionTypeList: [
+    {value: 'xn', defaultValue: ['2026-2027'], typeOption: {options: [
+      {value: '2026-2027', label: '2026-2027'}, {value: '2025-2026', label: '2025-2026'}]}},
+    {value: 'xq', defaultValue: ['SYNTHETIC_TERM_A'], typeOption: {options: [
+      {value: 'SYNTHETIC_TERM_A', label: '第一学期'}, {value: 'SYNTHETIC_TERM_B', label: '第二学期'}]}},
+    {value: 'hdbmzt', typeOption: {options: [
+      {value: 'SYNTHETIC_OPEN', label: '报名中'}, {value: 'SYNTHETIC_FULL', label: '报名已满'},
+      {value: 'SYNTHETIC_CONFIG', label: '流程设置中'}]}}
+  ]}};
+}
+function hit(id, extra) {
+  return {id, hdmc: 'SYNTHETIC_ACTIVITY_' + id, lbdm: '0104', lbmc: '志愿公益', dlmc: '德育', dldm: '01',
+    zbfmc: 'SYNTHETIC_HOST', ssxm: 'SYNTHETIC_PROJECT', hdkssj: '2026-11-01 13:00:00',
+    hdjssj: '2026-11-01 16:00:00', hdbmzt: 'SYNTHETIC_OPEN', zdzt: '0', ...extra};
+}
+function listAnswer(items = [hit('A1'), hit('A2')], page = 1, total = items.length, size = 10) {
+  return {code: 0, data: {items, currentPage: page, showCount: size, totalResult: total,
+    totalPage: Math.ceil(total / size), pageSize: 15, limit: 15, pageNo: 0, totalCount: 0}};
 }
 
-test('reads the activity list with the school query endpoint', () => {
+test('reads the full endpoint with official defaults and metadata state names', () => {
   const e = env(LIST, () => listAnswer());
   assert.equal(run(e, {action: 'list'}), 'started');
   const state = e.__xinxinActs;
   assert.equal(state.status, 'complete');
-  assert.equal(state.list.menus.length, 2);
-  assert.equal(state.list.menus[0].code, '0101');
-  assert.equal(state.list.menus[0].name, '讲座报告');
-  assert.equal(state.list.groups.length, 1);
-  assert.equal(state.list.groups[0].code, '01');
-  const items = state.list.groups[0].items;
-  assert.equal(items.length, 2);
-  assert.equal(items[0].id, 'A1');
-  assert.equal(items[0].dldm, '01');
-  assert.equal(items[0].name, '图书馆志愿服务');
-  assert.equal(items[0].dlmc, '德育');
-  assert.equal(items[0].lbmc, '志愿公益');
-  assert.equal(items[0].zbf, '团委');
-  assert.equal(items[0].project, '天天讲');
-  assert.equal(items[0].start, '2026-11-01 13:00:00');
-  assert.equal(items[0].signupEnd, '2026-10-31 18:00:00');
-  assert.equal(items[0].top, false);
-  assert.equal(items[1].top, true);
+  assert.equal(state.list.source, 'school-list');
+  assert.equal(state.list.groups[0].items.length, 2);
+  assert.equal(state.list.groups[0].items[0].schoolState, '报名中');
+  assert.equal(state.list.groups[0].items[0].year, '2026-2027');
+  assert.equal(state.list.scope.xq, 'SYNTHETIC_TERM_A');
+  assert.equal(state.list.filters.xq[0].name, '第一学期');
+  assert.equal(e.calls.length, 2);
+  assert.equal(e.calls[0].target, '/zftal-xgxt-web/gjcx/newList.zf');
+  assert.deepEqual(JSON.parse(e.calls[0].body), {ymdz: 'hdgl/hdlb'});
+  assert.equal(e.calls[1].target, '/zftal-xgxt-web/hdgl/list.zf');
+  const form = new URLSearchParams(e.calls[1].body);
+  assert.deepEqual(JSON.parse(form.get('selectType')), {xn: ['2026-2027'], xq: ['SYNTHETIC_TERM_A']});
+  assert.equal(form.get('all'), '1');
+  assert.equal(form.get('currentPage'), '1');
+  assert.equal(e.calls[1].headers['X-Requested-With'], 'XMLHttpRequest');
+  assert.ok(e.calls.every(c => !c.target.includes('/apply/') && !c.target.includes('getHdgcHdList')));
+});
+
+test('collects all pages using actual page fields, preserving order across blocks', () => {
+  const e = env(LIST, (m, url, body) => {
+    const page = Number(new URLSearchParams(body).get('currentPage'));
+    return page === 1 ? listAnswer([hit('L', {dlmc: '劳育'}), hit('D')], 1, 3, 2)
+      : listAnswer([hit('OLD', {hdjssj: '2000-01-01', zdzt: '1'})], 2, 3, 2);
+  });
+  run(e, {action: 'list'});
+  assert.equal(e.__xinxinActs.status, 'complete');
+  assert.deepEqual(Array.from(e.__xinxinActs.list.groups[0].items, x => x.id), ['L', 'D', 'OLD']);
+  assert.equal(new URLSearchParams(e.calls[2].body).get('showCount'), '2');
+  assert.equal(e.__xinxinActs.pages, 2);
+});
+
+test('deduplicates ids without grouping or reordering rows', () => {
+  const e = env(LIST, () => listAnswer([hit('A'), hit('A'), hit('B')]));
+  run(e, {action: 'list'});
+  assert.deepEqual(Array.from(e.__xinxinActs.list.groups[0].items, x => x.id), ['A', 'B']);
+});
+
+test('a failed later page cannot publish a partial list', () => {
+  for (const later of [null, {httpStatus: 401}, {event: 'timeout'}, listAnswer([hit('B')], 1, 2, 1), listAnswer([hit('B')], 2, 3, 1)]) {
+    let n = 0;
+    const e = env(LIST, () => ++n === 1 ? listAnswer([hit('A')], 1, 2, 1) : later);
+    run(e, {action: 'list'});
+    assert.equal(e.__xinxinActs.status, 'failed');
+    assert.equal(e.__xinxinActs.list, null);
+    assert.equal(e.calls.length, 3);
+  }
+});
+
+test('unsupported state codes stay unknown and do not infer from dates', () => {
+  const e = env(LIST, () => listAnswer([hit('A', {hdbmzt: 'UNKNOWN', hdjssj: '2000-01-01'})]));
+  run(e, {action: 'list'});
+  assert.equal(e.__xinxinActs.list.groups[0].items[0].schoolState, '状态待核实');
+});
+
+test('explicit all and selected academic scope use server codes, not date inference', () => {
+  for (const filters of [{xn: '', xq: ''}, {xn: '2025-2026', xq: 'SYNTHETIC_TERM_B'}]) {
+    const e = env(LIST, () => listAnswer([hit('A', {hdkssj: '2099-01-01'})]));
+    run(e, {action: 'list', filters});
+    assert.equal(e.__xinxinActs.status, 'complete');
+    assert.equal(e.__xinxinActs.list.groups[0].items[0].year, filters.xn);
+    const select = JSON.parse(new URLSearchParams(e.calls[1].body).get('selectType'));
+    assert.deepEqual(select.xn || [], filters.xn ? [filters.xn] : []);
+    assert.deepEqual(select.xq || [], filters.xq ? [filters.xq] : []);
+  }
+});
+
+test('metadata failure and invalid requested codes do not query activity pages', () => {
+  const e = env(LIST, () => null, {customMetadata: true});
+  run(e, {action: 'list'});
+  assert.equal(e.__xinxinActs.status, 'failed');
   assert.equal(e.calls.length, 1);
-  assert.match(e.calls[0].target, /^\/zftal-xgxt-web\/hdgl\/getHdgcHdList\.zf$/);
-  assert.equal(e.calls[0].method, 'POST');
-  assert.match(e.calls[0].body, /showCount=300/);
-  assert.equal(e.calls[0].headers['Content-Type'], 'application/x-www-form-urlencoded; charset=UTF-8');
-  assert.equal(e.calls[0].headers['X-Requested-With'], 'XMLHttpRequest');
+  const invalid = env(LIST, () => listAnswer());
+  run(invalid, {action: 'list', filters: {xq: 'GUESSED_TERM'}});
+  assert.equal(invalid.__xinxinActs.reason, 'filters');
+  assert.equal(invalid.calls.length, 1);
+});
+
+test('cancel or reinject aborts pending reads without advancing pages', () => {
+  const e = env(LIST, () => listAnswer(), {defer: true});
+  run(e, {action: 'list'});
+  assert.equal(e.__xinxinActs.status, 'pending');
+  const old = e.__xinxinActs;
+  old.cancel(); e.flush();
+  assert.equal(old.status, 'cancelled');
+  assert.equal(e.calls.length, 1);
+  run(e, {action: 'list'}); const replaced = e.__xinxinActs;
+  run(e, {action: 'list'}); e.flush();
+  assert.equal(replaced.status, 'cancelled');
+  assert.equal(e.__xinxinActs.status, 'complete');
+});
+
+test('unexpected pagination limits fail instead of truncating silently', () => {
+  const e = env(LIST, () => listAnswer([hit('A')], 1, 2010));
+  run(e, {action: 'list'});
+  assert.equal(e.__xinxinActs.reason, 'limit');
+  assert.equal(e.__xinxinActs.list, null);
 });
 
 test('reads one activity detail with the form fields merged in', () => {
@@ -215,7 +295,7 @@ test('reports a failed list request', () => {
 });
 
 test('a malformed success response is a failure rather than an empty cache', () => {
-  for (const data of [undefined, {}, {resultList: null}]) {
+  for (const data of [undefined, {}, {items: null}]) {
     const e = env(LIST, () => ({code: 0, data}));
     run(e, {action: 'list'});
     assert.equal(e.__xinxinActs.status, 'failed');
@@ -224,7 +304,7 @@ test('a malformed success response is a failure rather than an empty cache', () 
 });
 
 test('a genuine empty activity list remains a successful result', () => {
-  const e = env(LIST, () => ({code: 0, data: {resultList: []}}));
+  const e = env(LIST, () => listAnswer([]));
   run(e, {action: 'list'});
   assert.equal(e.__xinxinActs.status, 'complete');
   assert.equal(e.__xinxinActs.list.groups.length, 0);
