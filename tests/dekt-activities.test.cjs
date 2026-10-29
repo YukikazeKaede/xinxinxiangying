@@ -18,7 +18,8 @@ function env(url, routes, options) {
     send(body) {
       calls.push({method: this.method, target: this.target, body: body, headers: this.headers});
       const answer = this.target.endsWith('/gjcx/newList.zf') && !(options && options.customMetadata)
-        ? metadata() : routes(this.method, this.target, body);
+        ? metadata() : this.target.endsWith('/ywdmgl/searchXsDllb2.zf') && !(options && options.customCategories)
+          ? categories() : routes(this.method, this.target, body);
       const deliver = () => {
         if (this.aborted) return;
         if (answer && answer.event) { if (this['on' + answer.event]) this['on' + answer.event](); return; }
@@ -56,8 +57,15 @@ function metadata() {
       {value: 'SYNTHETIC_TERM_A', label: '第一学期'}, {value: 'SYNTHETIC_TERM_B', label: '第二学期'}]}},
     {value: 'hdbmzt', typeOption: {options: [
       {value: 'SYNTHETIC_OPEN', label: '报名中'}, {value: 'SYNTHETIC_FULL', label: '报名已满'},
-      {value: 'SYNTHETIC_CONFIG', label: '流程设置中'}]}}
+      {value: 'SYNTHETIC_CONFIG', label: '流程设置中'}]}},
+    {value: 'hdsfjxz', typeOption: {options: [{value: 'SYNTHETIC_ENDED', label: '已结束'}]}}
   ]}};
+}
+function categories() {
+  return {code: 0, data: {
+    dldm: {options: {D: [{label: '德育', value: '01'}], L: [{label: '劳育', value: '02'}]}},
+    lbdm: {options: {J: [{label: '讲座报告', value: '0101'}], Z: [{label: '志愿公益', value: '0104'}], S: [{label: '三创活动', value: '0201'}]}}
+  }};
 }
 function hit(id, extra) {
   return {id, hdmc: 'SYNTHETIC_ACTIVITY_' + id, lbdm: '0104', lbmc: '志愿公益', dlmc: '德育', dldm: '01',
@@ -69,107 +77,124 @@ function listAnswer(items = [hit('A1'), hit('A2')], page = 1, total = items.leng
     totalPage: Math.ceil(total / size), pageSize: 15, limit: 15, pageNo: 0, totalCount: 0}};
 }
 
-test('reads the full endpoint with official defaults and metadata state names', () => {
+test('first page uses official current-term defaults and exposes all category choices', () => {
   const e = env(LIST, () => listAnswer());
   assert.equal(run(e, {action: 'list'}), 'started');
   const state = e.__xinxinActs;
   assert.equal(state.status, 'complete');
-  assert.equal(state.list.source, 'school-list');
-  assert.equal(state.list.groups[0].items.length, 2);
+  assert.equal(state.list.page, 1);
+  assert.equal(state.list.hasMore, false);
   assert.equal(state.list.groups[0].items[0].schoolState, '报名中');
-  assert.equal(state.list.groups[0].items[0].year, '2026-2027');
   assert.equal(state.list.scope.xq, 'SYNTHETIC_TERM_A');
-  assert.equal(state.list.filters.xq[0].name, '第一学期');
-  assert.equal(e.calls.length, 2);
-  assert.equal(e.calls[0].target, '/zftal-xgxt-web/gjcx/newList.zf');
+  assert.equal(state.list.blocks.length, 2);
+  assert.equal(state.list.menus.length, 3);
+  assert.equal(e.calls.length, 3);
   assert.deepEqual(JSON.parse(e.calls[0].body), {ymdz: 'hdgl/hdlb'});
-  assert.equal(e.calls[1].target, '/zftal-xgxt-web/hdgl/list.zf');
-  const form = new URLSearchParams(e.calls[1].body);
+  const form = new URLSearchParams(e.calls[2].body);
   assert.deepEqual(JSON.parse(form.get('selectType')), {xn: ['2026-2027'], xq: ['SYNTHETIC_TERM_A']});
-  assert.equal(form.get('all'), '1');
-  assert.equal(form.get('currentPage'), '1');
-  assert.equal(e.calls[1].headers['X-Requested-With'], 'XMLHttpRequest');
+  assert.equal(form.get('showCount'), '10');
   assert.ok(e.calls.every(c => !c.target.includes('/apply/') && !c.target.includes('getHdgcHdList')));
 });
 
-test('collects all pages using actual page fields, preserving order across blocks', () => {
-  const e = env(LIST, (m, url, body) => {
-    const page = Number(new URLSearchParams(body).get('currentPage'));
-    return page === 1 ? listAnswer([hit('L', {dlmc: '劳育'}), hit('D')], 1, 3, 2)
-      : listAnswer([hit('OLD', {hdjssj: '2000-01-01', zdzt: '1'})], 2, 3, 2);
+test('returns ten immediately and fetches each next page only on explicit demand', () => {
+  const rows = Array.from({length: 25}, (_, i) => hit('SYNTHETIC_' + i));
+  const e = env(LIST, (method, url, body) => {
+    const n = Number(new URLSearchParams(body).get('currentPage'));
+    return listAnswer(rows.slice((n - 1) * 10, n * 10), n, 25);
   });
   run(e, {action: 'list'});
-  assert.equal(e.__xinxinActs.status, 'complete');
-  assert.deepEqual(Array.from(e.__xinxinActs.list.groups[0].items, x => x.id), ['L', 'D', 'OLD']);
-  assert.equal(new URLSearchParams(e.calls[2].body).get('showCount'), '2');
-  assert.equal(e.__xinxinActs.pages, 2);
+  assert.equal(e.__xinxinActs.list.groups[0].items.length, 10);
+  assert.equal(e.__xinxinActs.list.hasMore, true);
+  assert.equal(e.calls.length, 3);
+  const scope = JSON.parse(JSON.stringify(e.__xinxinActs.list.scope));
+  run(e, {action: 'list', page: 2, expectedTotal: 25, pageSize: 10, filters: scope});
+  assert.equal(e.__xinxinActs.list.page, 2);
+  assert.equal(e.__xinxinActs.list.groups[0].items[0].id, 'SYNTHETIC_10');
+  assert.equal(e.calls.length, 4, 'next page reuses metadata rather than fetching it again');
+  run(e, {action: 'list', page: 3, expectedTotal: 25, pageSize: 10, filters: scope});
+  assert.equal(e.__xinxinActs.list.groups[0].items.length, 5);
+  assert.equal(e.__xinxinActs.list.hasMore, false);
+  assert.equal(e.calls.length, 5);
 });
 
-test('deduplicates ids without grouping or reordering rows', () => {
-  const e = env(LIST, () => listAnswer([hit('A'), hit('A'), hit('B')]));
+test('server filters cover unloaded activities and use contains search', () => {
+  const e = env(LIST, () => listAnswer());
+  run(e, {action: 'list', search: 'SYNTHETIC & text', conditions: {dldm: '02', lbdm: '0201', hdbmzt: 'SYNTHETIC_OPEN'}});
+  const form = new URLSearchParams(e.calls[2].body), select = JSON.parse(form.get('selectType'));
+  assert.deepEqual(select.dldm, ['02']);assert.deepEqual(select.lbdm, ['0201']);assert.deepEqual(select.hdbmzt, ['SYNTHETIC_OPEN']);
+  assert.equal(form.get('inputSqlType'), '0');
+  assert.deepEqual(JSON.parse(form.get('inputType')).hdmc, ['SYNTHETIC & text']);
+});
+
+test('filter changes reuse recent dictionaries but new entry reloads current defaults', () => {
+  const e = env(LIST, () => listAnswer());
   run(e, {action: 'list'});
-  assert.deepEqual(Array.from(e.__xinxinActs.list.groups[0].items, x => x.id), ['A', 'B']);
+  assert.equal(e.calls.length, 3);
+  run(e, {action: 'list', reuseDictionary: true, conditions: {hdbmzt: 'SYNTHETIC_FULL'}});
+  assert.equal(e.calls.length, 4);
+  assert.deepEqual(JSON.parse(new URLSearchParams(e.calls[3].body).get('selectType')).hdbmzt, ['SYNTHETIC_FULL']);
+  run(e, {action: 'list'});
+  assert.equal(e.calls.length, 7);
 });
 
-test('a failed later page cannot publish a partial list', () => {
-  for (const later of [null, {httpStatus: 401}, {event: 'timeout'}, listAnswer([hit('B')], 1, 2, 1), listAnswer([hit('B')], 2, 3, 1)]) {
-    let n = 0;
-    const e = env(LIST, () => ++n === 1 ? listAnswer([hit('A')], 1, 2, 1) : later);
+test('deduplicates the current page without sorting', () => {
+  const e = env(LIST, () => listAnswer([hit('B'), hit('B'), hit('A')]));
+  run(e, {action: 'list'});
+  assert.deepEqual(Array.from(e.__xinxinActs.list.groups[0].items, x => x.id), ['B', 'A']);
+});
+
+test('page failures or changed pagination never produce an appendable result', () => {
+  for (const later of [null, {httpStatus: 401}, {event: 'timeout'}, listAnswer([hit('B')], 1, 20), listAnswer([hit('B')], 2, 21)]) {
+    let calls = 0;
+    const e = env(LIST, () => ++calls === 1 ? listAnswer(Array.from({length:10},(_,i)=>hit('S'+i)), 1, 20) : later);
     run(e, {action: 'list'});
-    assert.equal(e.__xinxinActs.status, 'failed');
-    assert.equal(e.__xinxinActs.list, null);
-    assert.equal(e.calls.length, 3);
+    run(e, {action: 'list', page: 2, expectedTotal: 20, pageSize: 10});
+    assert.equal(e.__xinxinActs.status, 'failed');assert.equal(e.__xinxinActs.list, null);
+    assert.equal(calls, 2);
   }
 });
 
-test('unsupported state codes stay unknown and do not infer from dates', () => {
-  const e = env(LIST, () => listAnswer([hit('A', {hdbmzt: 'UNKNOWN', hdjssj: '2000-01-01'})]));
-  run(e, {action: 'list'});
-  assert.equal(e.__xinxinActs.list.groups[0].items[0].schoolState, '状态待核实');
+test('unverified state codes stay unknown', () => {
+  const e = env(LIST, () => listAnswer([hit('A', {hdbmzt:'UNKNOWN'})]));run(e,{action:'list'});
+  assert.equal(e.__xinxinActs.list.groups[0].items[0].schoolState,'状态待核实');
 });
 
-test('explicit all and selected academic scope use server codes, not date inference', () => {
-  for (const filters of [{xn: '', xq: ''}, {xn: '2025-2026', xq: 'SYNTHETIC_TERM_B'}]) {
-    const e = env(LIST, () => listAnswer([hit('A', {hdkssj: '2099-01-01'})]));
-    run(e, {action: 'list', filters});
-    assert.equal(e.__xinxinActs.status, 'complete');
-    assert.equal(e.__xinxinActs.list.groups[0].items[0].year, filters.xn);
-    const select = JSON.parse(new URLSearchParams(e.calls[1].body).get('selectType'));
-    assert.deepEqual(select.xn || [], filters.xn ? [filters.xn] : []);
-    assert.deepEqual(select.xq || [], filters.xq ? [filters.xq] : []);
+test('empty scope never broadens into all terms; explicit semester is sent alone', () => {
+  for (const filters of [{xn:'',xq:''},{xn:'2025-2026',xq:'SYNTHETIC_TERM_B'}]) {
+    const e=env(LIST,()=>listAnswer());run(e,{action:'list',filters});
+    assert.equal(e.__xinxinActs.list.scope.xn,filters.xn||'2026-2027');
+    assert.equal(e.__xinxinActs.list.scope.xq,filters.xq||'SYNTHETIC_TERM_A');
   }
 });
 
-test('metadata failure and invalid requested codes do not query activity pages', () => {
-  const e = env(LIST, () => null, {customMetadata: true});
-  run(e, {action: 'list'});
-  assert.equal(e.__xinxinActs.status, 'failed');
-  assert.equal(e.calls.length, 1);
-  const invalid = env(LIST, () => listAnswer());
-  run(invalid, {action: 'list', filters: {xq: 'GUESSED_TERM'}});
-  assert.equal(invalid.__xinxinActs.reason, 'filters');
-  assert.equal(invalid.calls.length, 1);
+test('invalid scope or conditions never reaches activity query', () => {
+  for (const plan of [{filters:{xq:'GUESSED'}},{conditions:{lbdm:'UNKNOWN'}}]) {
+    const e=env(LIST,()=>listAnswer());run(e,{action:'list',...plan});
+    assert.equal(e.__xinxinActs.reason,'filters');assert.equal(e.calls.length,2);
+  }
 });
 
-test('cancel or reinject aborts pending reads without advancing pages', () => {
-  const e = env(LIST, () => listAnswer(), {defer: true});
-  run(e, {action: 'list'});
-  assert.equal(e.__xinxinActs.status, 'pending');
-  const old = e.__xinxinActs;
-  old.cancel(); e.flush();
-  assert.equal(old.status, 'cancelled');
-  assert.equal(e.calls.length, 1);
-  run(e, {action: 'list'}); const replaced = e.__xinxinActs;
-  run(e, {action: 'list'}); e.flush();
-  assert.equal(replaced.status, 'cancelled');
-  assert.equal(e.__xinxinActs.status, 'complete');
+test('semester choices arrive before activities and never impersonate a completed page', () => {
+  const e=env(LIST,()=>listAnswer(),{defer:true});run(e,{action:'list'});
+  e.pending.shift()();e.pending.shift()();
+  assert.equal(e.__xinxinActs.status,'pending');assert.equal(e.__xinxinActs.list,null);
+  assert.equal(e.__xinxinActs.options.filters.xq.length,2);e.flush();
+  assert.equal(e.__xinxinActs.status,'complete');
 });
 
-test('unexpected pagination limits fail instead of truncating silently', () => {
-  const e = env(LIST, () => listAnswer([hit('A')], 1, 2010));
-  run(e, {action: 'list'});
-  assert.equal(e.__xinxinActs.reason, 'limit');
-  assert.equal(e.__xinxinActs.list, null);
+test('missing current term and category dictionaries cannot silently broaden query', () => {
+  const fixture=metadata();fixture.data.conditionTypeList.find(x=>x.value==='xq').defaultValue=[];
+  const e=env(LIST,()=>fixture,{customMetadata:true});run(e,{action:'list'});
+  assert.equal(e.__xinxinActs.reason,'filters');assert.equal(e.calls.length,2);
+  const bad=env(LIST,()=>({code:0,data:{}}),{customCategories:true});run(bad,{action:'list'});
+  assert.equal(bad.__xinxinActs.reason,'filters');assert.equal(bad.calls.length,2);
+});
+
+test('cancel and reinjection stop pending reads', () => {
+  const e=env(LIST,()=>listAnswer(),{defer:true});run(e,{action:'list'});const old=e.__xinxinActs;
+  old.cancel();e.flush();assert.equal(old.status,'cancelled');assert.equal(e.calls.length,1);
+  run(e,{action:'list'});const replaced=e.__xinxinActs;run(e,{action:'list'});e.flush();
+  assert.equal(replaced.status,'cancelled');assert.equal(e.__xinxinActs.status,'complete');
 });
 
 test('reads one activity detail with the form fields merged in', () => {

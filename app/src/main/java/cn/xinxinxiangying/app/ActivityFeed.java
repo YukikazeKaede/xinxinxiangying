@@ -83,7 +83,8 @@ public final class ActivityFeed {
 
     /** 板块名对应的学校大类代码；旧缓存没有代码时返回空串。 */
     public static String blockCode(JSONObject list, JSONArray items, String block) {
-        JSONArray groups = list == null ? null : list.optJSONArray("groups");
+        JSONArray groups = list == null ? null : list.optJSONArray("blocks");
+        if (groups == null && list != null) groups = list.optJSONArray("groups");
         if (groups != null) {
             for (int i = 0; i < groups.length(); i++) {
                 JSONObject group = groups.optJSONObject(i);
