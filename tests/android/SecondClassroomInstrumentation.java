@@ -145,9 +145,9 @@ public final class SecondClassroomInstrumentation extends Instrumentation {
             launch(DektActivity.class);
             View root = activity.getWindow().getDecorView();
             check(text(root, "2.40") != null && text(root, "SYNTHETIC_CATEGORY") != null, "credit total and category render");
-            check(text(root, "SYNTHETIC_CHILD") == null, "credit children start collapsed");
+            check(text(root, "SYNTHETIC_CHILD") != null, "credit children start expanded");
             ui(() -> ((View) text(activity.getWindow().getDecorView(), "SYNTHETIC_CATEGORY").getParent()).performClick());
-            check(text(root, "SYNTHETIC_CHILD") != null, "credit category expands");
+            check(text(root, "SYNTHETIC_CHILD") == null, "credit category collapses");
             check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0, "credit screenshot protection retained");
             close();
             launch(ActivitiesActivity.class);

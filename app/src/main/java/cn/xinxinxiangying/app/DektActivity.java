@@ -195,78 +195,65 @@ public final class DektActivity extends Activity {
         content.addView(view);
     }
 
-    /** 学分明细：大类可展开看到子项，点击一次记住展开状态。 */
+    /** 分类独立成卡，默认展开；需求数值直接沿用学校快照。 */
     private void detail(JSONArray categories) {
-        LinearLayout card = CampusUi.column(this);
-        card.setBackground(CampusUi.shape(this, Color.WHITE, 14));
-        boolean first = true;
         for (int i = 0; i < categories.length(); i++) {
             JSONObject category = categories.optJSONObject(i);
             if (category == null) continue;
-            if (!first) {
-                View line = new View(this);
-                line.setBackgroundColor(CampusUi.LINE);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(1));
-                lp.leftMargin = dp(16);
-                lp.rightMargin = dp(16);
-                card.addView(line, lp);
-            }
-            first = false;
             String name = category.optString("name", "");
+            String earned = category.optString("earned", ""), required = category.optString("required", "");
+            boolean met = reached(earned, required), expanded = !open.contains(name);
+            int background = met ? 0xffeffaf5 : 0xfffff1f1;
+            LinearLayout card = CampusUi.column(this);
+            android.graphics.drawable.GradientDrawable shape = CampusUi.shape(this, background, 14);
+            shape.setStroke(dp(1), met ? 0xffcce9dd : 0xfff0d6d6);
+            card.setBackground(shape);
+            card.setPadding(dp(16), dp(8), dp(16), dp(8));
             JSONArray children = category.optJSONArray("children");
             int count = children == null ? 0 : children.length();
-            boolean expanded = open.contains(name);
-            View row = row(name, category.optString("earned", ""), category.optString("required", ""),
-                count > 0 ? (expanded ? "▾" : "›") : "", true);
+            View head = row(name, earned, required, count == 0 ? "" : expanded ? "⌃" : "⌄", true);
             if (count > 0) {
-                row.setFocusable(true);
-                row.setContentDescription(name + (expanded ? " 收起" : " 展开"));
-                row.setOnClickListener(v -> {
-                    if (!open.remove(name)) open.add(name);
-                    render();
-                });
+                head.setFocusable(true);
+                head.setContentDescription(name + (expanded ? " 收起" : " 展开"));
+                head.setOnClickListener(v -> { if (!open.remove(name)) open.add(name); render(); });
             }
-            card.addView(row);
-            if (!expanded || count == 0) continue;
-            for (int k = 0; k < count; k++) {
+            card.addView(head);
+            if (expanded) for (int k = 0; k < count; k++) {
                 JSONObject child = children.optJSONObject(k);
-                if (child == null) continue;
-                card.addView(row(child.optString("name", ""), child.optString("earned", ""), child.optString("required", ""), "", false));
+                if (child != null) card.addView(row(child.optString("name", ""), child.optString("earned", ""), child.optString("required", ""), "", false));
             }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+            lp.bottomMargin = dp(16);
+            content.addView(card, lp);
         }
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.bottomMargin = dp(14);
-        content.addView(card, lp);
     }
 
     private View row(String name, String earned, String required, String chevron, boolean top) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(top ? 16 : 32), dp(top ? 14 : 10), dp(14), dp(top ? 14 : 10));
-        row.setBackground(CampusUi.ripple(this, Color.WHITE, 0));
-        TextView label = CampusUi.text(this, name, top ? 15 : 13, CampusUi.INK);
+        row.setPadding(0, dp(top ? 12 : 14), 0, dp(top ? 12 : 14));
+        if (top) {
+            View marker = new View(this); marker.setBackground(CampusUi.shape(this, CampusUi.GREEN, 2));
+            LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(dp(3), dp(20)); mp.rightMargin = dp(9); row.addView(marker, mp);
+        } else row.setPadding(dp(12), dp(14), 0, dp(14));
+        TextView label = CampusUi.text(this, name, top ? 18 : 15, CampusUi.INK);
+        if (top) label.setTypeface(null, Typeface.BOLD);
         row.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
         row.addView(values(earned, required, top));
         if (!chevron.isEmpty()) {
-            TextView mark = CampusUi.text(this, chevron, 15, CampusUi.MUTED);
-            mark.setPadding(dp(8), 0, 0, 0);
-            row.addView(mark);
+            TextView mark = CampusUi.text(this, chevron, 22, CampusUi.MUTED);
+            mark.setPadding(dp(10), 0, 0, 0); row.addView(mark);
         }
         return row;
     }
 
-    /** 已获 / 需求；达到需求显示绿色，还差学分显示橙色（与学校页面的配色一致）。 */
     private LinearLayout values(String earned, String required, boolean top) {
-        LinearLayout line = new LinearLayout(this);
-        line.setGravity(Gravity.CENTER_VERTICAL);
-        TextView got = CampusUi.text(this, earned.isEmpty() ? "—" : earned, top ? 15 : 13,
-            required.isEmpty() ? CampusUi.INK : (reached(earned, required) ? CampusUi.GREEN : ORANGE));
-        got.setTypeface(null, Typeface.BOLD);
-        line.addView(got);
-        if (!required.isEmpty()) {
-            String need = required.indexOf('~') >= 0 ? required.replace("~", " ~ ") : required;
-            line.addView(CampusUi.text(this, " / " + need, top ? 13 : 12, CampusUi.MUTED));
-        }
+        LinearLayout line = new LinearLayout(this); line.setGravity(Gravity.CENTER_VERTICAL);
+        if (top) { line.setBackground(CampusUi.shape(this, 0xfff5f6f7, 6)); line.setPadding(dp(9), dp(7), dp(9), dp(7)); }
+        int color = earned.isEmpty() || required.isEmpty() ? CampusUi.MUTED : reached(earned, required) ? 0xff19ad8a : 0xffe86e70;
+        TextView got = CampusUi.text(this, earned.isEmpty() ? "—" : earned, top ? 18 : 16, color);
+        got.setTypeface(null, Typeface.BOLD); line.addView(got);
+        if (!required.isEmpty()) line.addView(CampusUi.text(this, " / " + required.replace("~", " ~ "), top ? 14 : 13, CampusUi.MUTED));
         return line;
     }
 
@@ -282,10 +269,12 @@ public final class DektActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(16), dp(14), dp(14), dp(14));
-        row.setBackground(CampusUi.shape(this, Color.WHITE, 14));
-        TextView label = CampusUi.text(this, "查看第二课堂活动", 15, CampusUi.GREEN);
+        android.graphics.drawable.GradientDrawable action = new android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT, new int[]{CampusUi.GREEN, 0xff00a48b});
+        action.setCornerRadius(dp(14)); row.setBackground(action);
+        TextView label = CampusUi.text(this, "查看活动", 17, Color.WHITE);
         row.addView(label, new LinearLayout.LayoutParams(0, -2, 1));
-        row.addView(CampusUi.text(this, "›", 18, CampusUi.MUTED));
+        row.addView(CampusUi.text(this, "›", 26, Color.WHITE));
         row.setFocusable(true);
         row.setContentDescription("查看第二课堂活动");
         row.setOnClickListener(v -> startActivity(new Intent(this, ActivitiesActivity.class)));
