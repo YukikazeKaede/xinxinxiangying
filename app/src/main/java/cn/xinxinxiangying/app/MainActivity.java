@@ -63,7 +63,7 @@ public final class MainActivity extends Activity {
     private LinearLayout panel(int inset){LinearLayout box=CampusUi.column(this);box.setPadding(dp(16),dp(14),dp(16),dp(14));box.setBackground(CampusUi.shape(this,Color.WHITE,14));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(dp(inset),0,dp(inset),0);content.addView(box,lp);return box;}
     private void showCampus(){
         TextView bar=text("心心相应",16,Color.WHITE);bar.setGravity(Gravity.CENTER);bar.setBackgroundColor(teal);content.addView(bar,new LinearLayout.LayoutParams(-1,dp(48)));
-        FrameLayout banner=new FrameLayout(this);banner.addView(new CampusUi.CampusArt(this),new FrameLayout.LayoutParams(-1,-1));
+        FrameLayout banner=new FrameLayout(this);ImageView campusPhoto=new ImageView(this);campusPhoto.setImageResource(R.drawable.campus_photo);campusPhoto.setScaleType(ImageView.ScaleType.CENTER_CROP);campusPhoto.setContentDescription("校园全景照片");banner.addView(campusPhoto,new FrameLayout.LayoutParams(-1,-1));
         LinearLayout caption=CampusUi.column(this);caption.setGravity(Gravity.BOTTOM);caption.setPadding(dp(20),dp(16),dp(20),dp(16));caption.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,new int[]{0x20052f29,0xe6052f29}));
         TextView schoolName=text("上海应用技术大学",18,Color.WHITE);schoolName.setTypeface(null,Typeface.BOLD);caption.addView(schoolName);
         java.util.Calendar today=java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Shanghai"));
