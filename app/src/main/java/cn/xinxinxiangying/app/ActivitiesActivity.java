@@ -228,6 +228,9 @@ public final class ActivitiesActivity extends Activity {
                 mine = personal; detail = null; stateFilter = "";
                 loadList(true); render();
             });
+            tab.setGravity(Gravity.CENTER);
+            tab.setTypeface(null, Typeface.BOLD);
+            tab.setIncludeFontPadding(false);
             tabs.addView(tab, new LinearLayout.LayoutParams(0, dp(42), 1));
         }
         content.addView(tabs);

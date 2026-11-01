@@ -11,4 +11,7 @@
     <instrumentation android:name=".SessionFlowInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".CampusProfileInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".CampusSummaryInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".DektRecordsInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".ToolsGridInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".ElectricityInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
 </manifest>

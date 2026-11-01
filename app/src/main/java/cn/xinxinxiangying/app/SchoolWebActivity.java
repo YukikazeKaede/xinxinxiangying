@@ -49,6 +49,8 @@ public final class SchoolWebActivity extends Activity {
     private String lastQueryState="";
     private String academicService;
     private boolean syncAll;
+    private boolean secondSyncStarted, syncIncomplete;
+    private boolean electricityRoomRestored;
     private String syncStage;
     private String academicScript;
     private String academicXnm="";
@@ -107,22 +109,24 @@ public final class SchoolWebActivity extends Activity {
         });
         LinearLayout bar=new LinearLayout(this);bar.setBackgroundColor(android.graphics.Color.WHITE);bar.setGravity(android.view.Gravity.CENTER_VERTICAL);bar.setPadding(dp(12),dp(10),dp(12),dp(10));
         LinearLayout back=new LinearLayout(this);back.setGravity(android.view.Gravity.CENTER);back.setBackground(CampusUi.ripple(this,android.graphics.Color.WHITE,6));back.addView(new CampusUi.Icon(this,"back",CampusUi.GREEN),new LinearLayout.LayoutParams(dp(22),dp(22)));back.setContentDescription("返回");back.setFocusable(true);back.setOnClickListener(v->leaveSchool());bar.addView(back,new LinearLayout.LayoutParams(dp(44),dp(44)));
-        TextView title=CampusUi.text(this,academicService!=null?SchoolCatalog.title(service):syncAll?"同步课表、成绩与第二课堂":sessionOnly?"学校统一认证":autoSync?"同步课表":"auth".equals(service)?"学校统一认证":SchoolCatalog.title(service),18,CampusUi.INK);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setPadding(dp(14),0,dp(4),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        TextView title=CampusUi.text(this,autoSync?"同步学校数据":"auth".equals(service)?"学校统一认证":SchoolCatalog.title(service),18,CampusUi.INK);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setPadding(dp(14),0,dp(4),0);bar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
         if("timetable".equals(service)){
             importButton=CampusUi.button(this,autoSync?"手动导入":"导入",true,v->manualImport());bar.addView(importButton,new LinearLayout.LayoutParams(-2,dp(44)));
+            if(autoSync)importButton.setVisibility(View.GONE);
         }
         LinearLayout more=new LinearLayout(this);more.setGravity(android.view.Gravity.CENTER);more.setBackground(CampusUi.ripple(this,android.graphics.Color.WHITE,6));more.addView(new CampusUi.Icon(this,"more",CampusUi.GREEN),new LinearLayout.LayoutParams(dp(22),dp(22)));more.setContentDescription("更多");more.setFocusable(true);more.setOnClickListener(v->showMenu());bar.addView(more,new LinearLayout.LayoutParams(dp(44),dp(44)));root.addView(bar);
-        status=CampusUi.text(this,"正在连接学校系统",11,CampusUi.MUTED);status.setPadding(dp(20),dp(2),dp(20),dp(10));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);root.addView(status);
-        if(SchoolCatalog.isAcademic(service)){
+        if(autoSync)more.setVisibility(View.GONE);
+        status=CampusUi.text(this,"正在验证学校账号…",11,CampusUi.MUTED);status.setPadding(dp(20),dp(2),dp(20),dp(10));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);if(!autoSync)root.addView(status);
+        if(SchoolCatalog.isAcademic(service)&&!autoSync){
             LinearLayout guide=CampusUi.column(this);guide.setPadding(dp(15),dp(12),dp(15),dp(12));guide.setBackground(CampusUi.shape(this,CampusUi.SOFT,8));
             TextView guideTitle=CampusUi.text(this,syncAll?"正在同步课表、成绩、考试与第二课堂":autoSync?(academicService!=null?"正在读取学校数据":"正在为你获取课表"):"timetable".equals(service)?"登录 · 查询 · 导入":"在学校系统中查看",13,CampusUi.GREEN);guideTitle.setTypeface(null,android.graphics.Typeface.BOLD);guide.addView(guideTitle);
             TextView hint=CampusUi.text(this,academicService!=null?"登录成功后自动读取并保存在本机，之后打开即可离线查看。验证码或二次验证请在学校页面完成；读取失败时原有记录不会改变。":syncAll?"登录成功后自动读取并保存课表、学分绩点、考试安排与第二课堂学分。验证码或二次验证请在学校页面完成；某一项读取失败不影响其它数据。":autoSync?"登录成功后自动读取并保存课表。验证码或二次验证请在学校页面完成；若没有自动完成，可在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”。":"timetable".equals(service)?"打开个人课表，选择学期并查询，再点右上角“导入”。":(postgraduate?"研究生":"本科生")+"：登录后选择对应菜单；可在“更多”中返回学校首页。",12,CampusUi.INK);hint.setLineSpacing(dp(3),1);hint.setPadding(0,dp(5),0,0);guide.addView(hint);
             LinearLayout.LayoutParams gp=new LinearLayout.LayoutParams(-1,-2);gp.setMargins(dp(14),0,dp(14),dp(12));root.addView(guide,gp);
         }
-        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(CampusUi.GREEN));root.addView(progress,new LinearLayout.LayoutParams(-1,dp(2)));
+        progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(CampusUi.GREEN));if(!autoSync)root.addView(progress,new LinearLayout.LayoutParams(-1,dp(2)));
         if("code".equals(service)&&!autoSync){paymentOwner=PaymentCodeWebView.owner(this,postgraduate);web=PaymentCodeWebView.obtain(this,paymentOwner);web.setVisibility(View.INVISIBLE);}
         else web=new WebView(this);
-        if(autoSync){FrameLayout stage=new FrameLayout(this);stage.addView(web,new FrameLayout.LayoutParams(-1,-1));LinearLayout loading=CampusUi.column(this);loading.setGravity(android.view.Gravity.CENTER);loading.setBackgroundColor(CampusUi.BG);loading.addView(new CampusUi.ScheduleArt(this),new LinearLayout.LayoutParams(dp(150),dp(140)));TextView message=CampusUi.text(this,syncAll?"正在登录学校并同步课表、成绩与第二课堂…":academicService!=null?"正在登录学校并读取数据…":sessionOnly?"正在验证学校账号…":"正在登录学校并查询课表…",15,CampusUi.INK);message.setGravity(android.view.Gravity.CENTER);message.setPadding(dp(20),dp(24),dp(20),dp(20));loading.addView(message);loading.addView(new ProgressBar(this),new LinearLayout.LayoutParams(dp(28),dp(28)));syncOverlay=loading;stage.addView(loading,new FrameLayout.LayoutParams(-1,-1));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));}
+        if(autoSync){FrameLayout stage=new FrameLayout(this);stage.addView(web,new FrameLayout.LayoutParams(-1,-1));syncOverlay=new SyncProgressView(this,status);stage.addView(syncOverlay,new FrameLayout.LayoutParams(-1,-1));root.addView(stage,new LinearLayout.LayoutParams(-1,0,1));web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);}
         else root.addView(web,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
         WebSettings settings=web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -157,6 +161,7 @@ public final class SchoolWebActivity extends Activity {
                 if(SchoolCatalog.isSchoolUrl(url)) return false; confirmExternal(url); return true;
             }
             @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon) {
+                if(electricityRoomRestored)view.setEnabled(true);
                 paymentReady=false;
                 navigationFailed=false;pageVersion++;
                 if(!SessionPolicy.isAuthHost(Uri.parse(url).getHost()))manualLoginSubmitted=false;
@@ -164,7 +169,7 @@ public final class SchoolWebActivity extends Activity {
                 if(!SchoolCatalog.isSchoolUrl(url)) {
                     navigationFailed=true; view.stopLoading(); status.setText("已停止外部页面 · 可在浏览器中继续"); return;
                 }
-                status.setText("正在连接 · "+safeHost(url));
+                status.setText(autoSync?currentSyncTask():"正在连接 · "+safeHost(url));
             }
             @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))view.setVisibility(View.VISIBLE);}
             @Override public void onPageFinished(WebView view,String url) {
@@ -172,7 +177,7 @@ public final class SchoolWebActivity extends Activity {
                 boolean authPage=!navigationFailed&&SchoolCatalog.isSchoolUrl(url)
                     &&SessionPolicy.isAuthHost(Uri.parse(url).getHost());
                 if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))
-                    status.setText(authPage?"请登录学校账号，完成后会回到当前服务":"校方页面 · "+safeHost(url));
+                    status.setText(autoSync?currentSyncTask():authPage?"请登录学校账号，完成后会回到当前服务":"校方页面 · "+safeHost(url));
                 CookieManager.getInstance().flush();
                 if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
@@ -182,8 +187,9 @@ public final class SchoolWebActivity extends Activity {
                     else paymentReady="code".equals(service)&&SchoolCatalog.url("code",postgraduate).equals(url);
                 }
                 if(autoSync&&!navigationFailed){
+                    if(!SessionPolicy.isLoginUrl(url))hideSchool();
                     // 用户在学校页面完成密码/验证码并跳转回来后，继续原来的同步。
-                    if(waitingForUser&&!SessionPolicy.isLoginUrl(url)){waitingForUser=false;autoStopped=false;}
+                    if(waitingForUser&&!SessionPolicy.isLoginUrl(url)){waitingForUser=false;autoStopped=false;hideSchool();}
                     else if(waitingForUser&&authPage)observeLoginError();
                     if(!autoStopped)advanceAuto(pageVersion);
                 }
@@ -248,9 +254,38 @@ public final class SchoolWebActivity extends Activity {
         web.evaluateJavascript("window.__xinxinElectricity&&window.__xinxinElectricity.status",result->{
             if(web==null||isFinishing()||version!=pageVersion)return;
             String state=unquote(result);
-            if("complete".equals(state))status.setText("奉贤校区 · 住宿区 · 请选择楼栋、楼层和房间");
+            if("complete".equals(state)){
+                status.setText("奉贤校区 · 住宿区 · 请选择楼栋、楼层和房间");
+                restoreElectricityRoom(version);
+            }
             else if("pending".equals(state)&&attempt<45)autoHandler.postDelayed(()->electricityProgress(version,attempt+1),500);
             else status.setText("校区未能自动填写，请在原表单中选择");
+        });
+    }
+    /** Restore the user's saved selection once; amount entry and payment remain on the school page. */
+    private void restoreElectricityRoom(int version){
+        String raw=getIntent().getStringExtra("electricityRoom");
+        if(electricityRoomRestored||raw==null||raw.isEmpty())return;
+        electricityRoomRestored=true;getIntent().removeExtra("electricityRoom");
+        try{
+            org.json.JSONObject room=ElectricityParser.room(new org.json.JSONObject(raw));
+            org.json.JSONObject plan=new org.json.JSONObject().put("action","restore").put("room",room);
+            String adapter=readAsset("electricity-page.js");
+            if(adapter.isEmpty())return;
+            web.setEnabled(false);status.setText("正在载入已保存的寝室…");
+            web.evaluateJavascript(adapter.replace("__ELECTRICITY_PLAN__",plan.toString()),ignored->waitElectricityRoom(version,0,room));
+        }catch(Exception ignored){web.setEnabled(true);status.setText("请在学校页面选择寝室后继续充值");}
+    }
+    private void waitElectricityRoom(int version,int attempt,org.json.JSONObject room){
+        if(web==null||isFinishing()||version!=pageVersion)return;
+        web.evaluateJavascript("window.__xinxinElectricityPage?JSON.stringify(window.__xinxinElectricityPage):''",value->{
+            if(web==null||isFinishing()||version!=pageVersion)return;
+            try{
+                org.json.JSONObject result=new org.json.JSONObject(unquote(value));
+                if("pending".equals(result.optString("status"))&&attempt<115){autoHandler.postDelayed(()->waitElectricityRoom(version,attempt+1,room),500);return;}
+                web.setEnabled(true);
+                status.setText("complete".equals(result.optString("status"))?ElectricityParser.description(room)+" · 请核对金额后继续充值":"寝室未能自动恢复，请在学校页面重新选择");
+            }catch(Exception ignored){web.setEnabled(true);status.setText("请在学校页面选择寝室后继续充值");}
         });
     }
     private void saveProfileName(org.json.JSONObject parsed){
@@ -258,7 +293,14 @@ public final class SchoolWebActivity extends Activity {
         if(!owner.isEmpty()&&owner.equals(new SchoolAccount(this).username(postgraduate))&&!parsed.optString("studentName","").isEmpty())
             if(!new LocalProfile(this,postgraduate).saveName(parsed.optString("studentName")))Toast.makeText(this,"姓名暂未保存，可稍后重新同步",Toast.LENGTH_SHORT).show();
     }
-    private void revealSchool(){if(syncOverlay!=null)syncOverlay.setVisibility(View.GONE);}
+    private String currentSyncTask(){
+        if(sessionOnly)return "正在验证学校账号…";
+        if(!authenticationAccepted)return "正在验证学校账号…";
+        String stage=syncStage!=null?syncStage:academicService;
+        return "exams".equals(stage)?"正在读取考试安排…":stage!=null?"正在读取学分绩点…":"正在读取课表…";
+    }
+    private void hideSchool(){if(syncOverlay!=null){syncOverlay.setVisibility(View.VISIBLE);web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);}}
+    private void revealSchool(){if(syncOverlay!=null){syncOverlay.setVisibility(View.GONE);web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);}}
     /** 只有学校明确要求认证时才走这里；保留本机身份与 Cookie，单飞启动一次登录。 */
     private void requestReauth(String message){
         if(isFinishing())return;
@@ -279,8 +321,9 @@ public final class SchoolWebActivity extends Activity {
     }
     /** 网络、证书、权限和服务端错误：停下自动流程，但不清登录态。 */
     private void stopForServerError(String message){
+        if(syncAll&&authenticationAccepted&&!secondSyncStarted){skipSyncStage(message);return;}
         autoStopped=true;waitingForUser=false;autoHandler.removeCallbacksAndMessages(null);
-        revealSchool();resetImportButton();status.setText(message);
+        if(!autoSync)revealSchool();resetImportButton();status.setText(message);
     }
     /** 需要用户在学校页面完成密码/验证码：停在原页面，不重载、不重复提交。 */
     private void waitForUser(String message){
@@ -337,8 +380,8 @@ public final class SchoolWebActivity extends Activity {
             case SECOND_ACTIVITIES: next=new Intent(this,ActivitiesActivity.class);break;
             case CARD:
             case CODE:
-            case ELECTRICITY:
                 next=new Intent(this,SchoolWebActivity.class).putExtra("service",returnService).putExtra("postgraduate",postgraduate);break;
+            case ELECTRICITY: next=new Intent(this,ElectricityActivity.class);break;
             case ACADEMIC:
                 next=new Intent(this,AcademicActivity.class).putExtra("service",returnService).putExtra("postgraduate",postgraduate);break;
             case TIMETABLE:
@@ -378,24 +421,36 @@ public final class SchoolWebActivity extends Activity {
     private void enterApp(){pendingPassword="";autoStopped=true;startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
     /** 课表、成绩、考试完成后继续读第二课堂学分；失败不影响已保存数据。 */
     private void startSecondClassSync(){
-        if(isFinishing()||isDestroyed())return;
+        if(isFinishing()||isDestroyed()||secondSyncStarted)return;
         if(!syncAll||postgraduate){enterApp();return;}
         if(!AppSession.valid(this)||!isCurrentSession()){finish();return;}
+        secondSyncStarted=true;
         status.setText("正在读取第二课堂学分…");
-        Intent i=new Intent(this,DektActivity.class).putExtra("autoSync",true).putExtra("postgraduate",postgraduate);
+        Intent i=new Intent(this,DektActivity.class).putExtra("autoSync",true).putExtra("postgraduate",postgraduate).putExtra("syncIncomplete",syncIncomplete);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(i);finish();
     }
-    private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){waitForUser(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
+    private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){waitForUser(message);return;}if(syncAll){skipSyncStage(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
+    private void skipSyncStage(String message){
+        if(secondSyncStarted)return;
+        if(!isCurrentSession()){finish();return;}
+        syncIncomplete=true;autoStopped=true;autoHandler.removeCallbacksAndMessages(null);resetImportButton();hideSchool();
+        if(syncStage==null)startAcademicStage("grades");else finishAcademicStage(syncStage,message);
+    }
     /** 自动流程失败后不把用户踢回登录页：留在学校页面，把导入交回「手动导入」。 */
     private void offerManualImport(String message){
         if(isFinishing()||isDestroyed())return;
+        if(syncAll&&authenticationAccepted){skipSyncStage(message);return;}
+        if(autoSync&&academicService!=null&&authenticationAccepted){
+            autoStopped=true;autoHandler.removeCallbacksAndMessages(null);resetImportButton();hideSchool();
+            status.setText(message+"，原有数据已保留，请返回后重试");return;
+        }
         boolean announce=!message.equals(manualHint);
         if(announce)manualHint=message;
         autoStopped=true;autoHandler.removeCallbacksAndMessages(null);manualMode=true;
         revealSchool();resetImportButton();
         log("manual-import-offer "+message+" "+(web==null?"":safeUrl(web.getUrl())));
-        if(importButton!=null){importButton.setEnabled(true);importButton.setText("手动导入");}
+        if(importButton!=null){importButton.setEnabled(true);importButton.setText("手动导入");importButton.setVisibility(View.VISIBLE);}
         status.setText(academicService!=null?message+" · 可在学校页面完成后重试":message+" · 请在学校页面打开“学生课表查询（按周次）”，再点右上角“手动导入”");
         if(announce)Toast.makeText(this,academicService!=null?message+"。可在学校页面完成后再试。":message+"。可在学校页面打开课表后点“手动导入”。",Toast.LENGTH_LONG).show();
     }
@@ -452,7 +507,7 @@ public final class SchoolWebActivity extends Activity {
             if(academicService!=null){
                 // 还停在统一认证页时不要发请求：否则会抢在用户输验证码之前就报读取失败。
                 if(SessionPolicy.isLoginUrl(url)){scheduleAuto(version);return;}
-                autoQueryStarted=true;navErrors=0;revealSchool();status.setText("正在读取学校数据…");importAcademic(url);return;
+                autoQueryStarted=true;navErrors=0;hideSchool();status.setText(currentSyncTask());importAcademic(url);return;
             }
             // 本科生课表由学校手机版接口直接给出，接口在任意已登录页面都能用，
             // 不必先把 WebView 导航到课表页（学校页面被直接打开时会报“系统运行异常”）。
@@ -469,7 +524,7 @@ public final class SchoolWebActivity extends Activity {
                 if("needs-login".equals(nav)){requestReauth("学校登录已失效，请重新验证");return;}
                 if("not-academic".equals(nav)){scheduleAuto(version);return;}
                 if(authenticationAccepted)menuPolls++;
-                if(menuPolls==6){revealSchool();status.setText("已登录，正在打开学校课表页…");}
+                if(menuPolls==6){hideSchool();status.setText("正在读取课表…");}
                 if(menuPolls>40){offerManualImport("已登录，但没能自动打开学校课表页");return;}
                 // The PG adapter consumes only data already returned by a real school page.
                 if(postgraduate&&timetableScript!=null){web.evaluateJavascript(timetableScript,data->{try{Object decoded=new JSONTokener(data).nextValue();org.json.JSONObject extraction=new org.json.JSONObject((String)decoded);TimetableParser.parse(extraction);autoQueryStarted=true;extractTimetable(url);}catch(Exception e){scheduleAuto(version);}});}
@@ -489,7 +544,8 @@ public final class SchoolWebActivity extends Activity {
             for(String key:new String[]{"patches","periodTimes","viewMode","palette","wallpaper","visibleDays","reminderMinutes","deletedCourseIds","smartWeekend","showStatus","cardAlpha"})if(old.has(key))parsed.put(key,old.get(key));
             org.json.JSONArray previous=old.optJSONArray("courses"),deleted=old.optJSONArray("deletedCourseIds");java.util.Set<String> removed=new java.util.HashSet<>();if(deleted!=null)for(int i=0;i<deleted.length();i++)removed.add(deleted.optString(i));java.util.LinkedHashMap<String,org.json.JSONObject> merged=new java.util.LinkedHashMap<>();for(int i=0;i<courses.length();i++){org.json.JSONObject c=courses.getJSONObject(i);if(!removed.contains(c.optString("id")))merged.put(c.optString("id"),c);}if(previous!=null)for(int i=0;i<previous.length();i++){org.json.JSONObject c=previous.getJSONObject(i);if("manual".equals(c.optString("origin")))merged.put(c.optString("id"),c);}org.json.JSONArray complete=new org.json.JSONArray();for(org.json.JSONObject c:merged.values()){complete.put(c);maxWeek=Math.max(maxWeek,c.optInt("endWeek",1));}parsed.put("courses",complete).put("totalWeeks",Math.max(maxWeek,parsed.optInt("totalWeeks",20)));
             repository.save(parsed);saveProfileName(parsed);org.json.JSONArray missing=parsed.optJSONArray("failedWeeks");
-            Toast.makeText(this,missing==null||missing.length()==0?"登录成功，课表已同步":"课表已同步（第"+missing.join("、")+"周未抓取，请稍后重试）",Toast.LENGTH_LONG).show();if(syncAll)startAcademicStage("grades");else enterApp();
+            if(syncAll){if(missing!=null&&missing.length()>0)syncIncomplete=true;startAcademicStage("grades");}
+            else{Toast.makeText(this,missing==null||missing.length()==0?"登录成功，课表已同步":"课表已同步（第"+missing.join("、")+"周未抓取，请稍后重试）",Toast.LENGTH_LONG).show();enterApp();}
         }catch(Exception e){offerManualImport(e.getMessage()==null?"课表保存失败":e.getMessage());}
     }
     private String safeHost(String url) {
@@ -595,8 +651,9 @@ public final class SchoolWebActivity extends Activity {
     }
     /** 自动同步时按阶段读取：先绩点（成绩），再考试安排。 */
     private void startAcademicStage(String stage) {
-        if(isFinishing()||isDestroyed())return;
+        if(isFinishing()||isDestroyed()||secondSyncStarted)return;
         syncStage=stage;
+        hideSchool();
         if(web==null||academicScript==null){finishAcademicStage(stage,"读取组件不可用");return;}
         String url=web.getUrl();
         // 课表接口已经成功，说明当前 Cookie 有效；登录交接页（/sso/jziotlogin）也能同源调用教务接口。
@@ -607,10 +664,10 @@ public final class SchoolWebActivity extends Activity {
         importAcademic(url,stage);
     }
     private void finishAcademicStage(String stage,String message){
-        if(!syncAll)return;
+        if(!syncAll||secondSyncStarted)return;
+        syncIncomplete=true;
         log("sync-stage "+stage+" failed="+message);
         if("grades".equals(stage)){startAcademicStage("exams");return;}
-        if(message!=null&&!message.isEmpty())Toast.makeText(this,"部分数据未读取："+message,Toast.LENGTH_LONG).show();
         startSecondClassSync();
     }
     private void importAcademic(String url,String target) {
@@ -692,7 +749,7 @@ public final class SchoolWebActivity extends Activity {
                         acceptAuthentication();
                         if(!keepOld)new AcademicRepository(SchoolWebActivity.this).save(target,parsed);
                     }catch(Exception e){stopForServerError("账号状态已变化或无法保存，原有数据未覆盖");return;}
-                    Toast.makeText(this,keepOld?"当前学期暂无"+("exams".equals(target)?"考试":"成绩")+"，已保留上次数据":"已读取 "+count+" 条记录",Toast.LENGTH_SHORT).show();
+                    if(!syncAll)Toast.makeText(this,keepOld?"当前学期暂无"+("exams".equals(target)?"考试":"成绩")+"，已保留上次数据":"已读取 "+count+" 条记录",Toast.LENGTH_SHORT).show();
                     if(syncAll){
                         if("grades".equals(target))startAcademicStage("exams");
                         else startSecondClassSync();

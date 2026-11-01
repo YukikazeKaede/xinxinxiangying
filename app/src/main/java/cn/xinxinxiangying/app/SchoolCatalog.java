@@ -10,6 +10,7 @@ public final class SchoolCatalog {
     public static final String UG_HOME = "https://jwxt.sit.edu.cn/";
     public static final String PG_HOME = "https://yjsgl.sit.edu.cn/login/loginSso";
     public static final String CARD_HOME = "https://ecard.sit.edu.cn/epay/h5/index";
+    public static final String ELECTRICITY = "https://ecard.sit.edu.cn/epay/h5/payele";
     public static final String PORTAL = "https://portal.sit.edu.cn";
     /** 学校菜单里的「学生课表查询（按周次）」页，登录后可直接打开（同源、无凭据）。 */
     public static final String UG_KB_ENTRY = "https://jwxt.sit.edu.cn/jwglxt/kbcx/xskbcxZccx_cxXSkbcxIndex.html?gnmkdm=N2154&layout=default";
@@ -27,6 +28,10 @@ public final class SchoolCatalog {
     public static final String DEKT_HOME = "https://xg.sit.edu.cn/dektxf/xfqktj?redirect=%2F";
     /** 第二课堂活动报名页：活动列表按板块分组。 */
     public static final String DEKT_ACTIVITIES = "https://xg.sit.edu.cn/hdgl/hdydlist?redirect=%2F";
+    /** 服务大厅「学分明细查询 / 学分认定管理」页：逐条列出已认定学分（活动、认定时间、分值）。 */
+    public static final String DEKT_RECORDS = "https://xg.sit.edu.cn/apply-manage/xsrd?redirect=%2Fservice%2Ffwdt";
+    /** 服务大厅首页：直接打开学分明细的应用会落到空的管理页，从首页点进去才是学生视图。 */
+    public static final String DEKT_HALL = "https://xg.sit.edu.cn/service/fwdt";
     /**
      * 学工系统的 CAS 入口。注意：不要用 `/zftal-xgxt-web/login`——未登录时它 302 到 CAS，
      * 但已登录后会落到不存在的 Tomcat 路径并返回 404。这里直接走 CAS 的 service 入口，
@@ -77,7 +82,7 @@ public final class SchoolCatalog {
         if ("second".equals(id)) return DEKT_HOME;
         if ("second_activities".equals(id)) return DEKT_ACTIVITIES;
         if ("code".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/v5qrcode";
-        if ("electricity".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/payele";
+        if ("electricity".equals(id)) return ELECTRICITY;
         // No recharge create-order endpoint has been verified: enter the official homepage.
         return CARD_HOME;
     }
