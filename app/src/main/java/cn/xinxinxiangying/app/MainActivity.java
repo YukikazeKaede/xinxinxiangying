@@ -76,8 +76,8 @@ public final class MainActivity extends Activity {
         statistic(statistics,AcademicParser.overallGpa(grades),"平均绩点",v->openService("gpa"));
         statistic(statistics,second==null?"":second.optString("earned"),"第二课堂",v->openService("second"));gap(16);
         LinearLayout services=toolPanel();services.setPadding(dp(6),dp(14),dp(6),dp(14));
-        serviceGrid(services,new String[]{"exams","gpa","second","activities","card","code","electricity","account"},
-            new String[]{"考试安排","学分绩点","学分情况","活动报名","校园卡","付款码","宿舍电费","学校账号"});gap(12);
+        serviceGrid(services,new String[]{"code","exams","card","electricity","gpa","activities"},
+            new String[]{"付款码","考试安排","校园卡","宿舍电费","学分绩点","二课报名"});gap(12);
         LinearLayout identity=new LinearLayout(this);identity.setGravity(Gravity.CENTER_VERTICAL);identity.setPadding(dp(22),0,dp(14),0);
         identity.addView(new CampusUi.Icon(this,"person",muted),new LinearLayout.LayoutParams(dp(17),dp(17)));
         TextView student=text(isPostgraduate()?"研究生服务":"本科生服务",12,muted);student.setPadding(dp(7),0,0,0);identity.addView(student,new LinearLayout.LayoutParams(0,-2,1));
@@ -108,11 +108,11 @@ public final class MainActivity extends Activity {
         int count=TimetableModel.day(doc,week,day).length();return "第 "+week+" 周 · "+(count==0?"今日没有课程":"今日 "+count+" 项课程安排");
     }
     private void serviceGrid(LinearLayout parent,String[] ids,String[] titles){
-        for(int start=0;start<ids.length;start+=4){
+        for(int start=0;start<ids.length;start+=3){
             LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.TOP);
-            for(int i=start;i<Math.min(start+4,ids.length);i++){
+            for(int i=start;i<Math.min(start+3,ids.length);i++){
                 final String id=ids[i];LinearLayout cell=CampusUi.column(this);cell.setGravity(Gravity.CENTER);cell.setPadding(dp(1),dp(14),dp(1),dp(14));cell.setMinimumHeight(dp(108));cell.setBackground(CampusUi.ripple(this,Color.WHITE,12));
-                cell.addView(new ServiceIcon(this,id),new LinearLayout.LayoutParams(dp(44),dp(44)));
+                cell.addView(new ServiceIcon(this,id),new LinearLayout.LayoutParams(dp(58),dp(58)));
                 TextView name=text(titles[i],14,0xff4c5350);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(10),0,0);name.setMaxLines(2);name.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_BALANCED);cell.addView(name,new LinearLayout.LayoutParams(-1,-2));
                 cell.setFocusable(true);cell.setContentDescription(titles[i]);cell.setOnClickListener(v->openService(id));row.addView(cell,new LinearLayout.LayoutParams(0,-2,1));
             }
@@ -150,6 +150,7 @@ public final class MainActivity extends Activity {
         if("timetable".equals(id)) { selectTab(0); return; }
         if("second".equals(id)) { startActivity(new Intent(this,DektActivity.class)); return; }
         if("activities".equals(id)) { startActivity(new Intent(this,ActivitiesActivity.class)); return; }
+        if("electricity".equals(id)) { startActivity(new Intent(this,ElectricityActivity.class)); return; }
         if("account".equals(id)) { startActivity(new Intent(this,SchoolLoginActivity.class).putExtra("edit",true)); return; }
         // 考试、成绩、绩点使用与课表相同的学校登录流程，读到数据后在本机列表里查看。
         if(SchoolCatalog.isAcademic(id)) { startActivity(new Intent(this,AcademicActivity.class).putExtra("service",id).putExtra("postgraduate",isPostgraduate())); return; }
@@ -179,6 +180,8 @@ public final class MainActivity extends Activity {
                     android.webkit.WebView temp=new android.webkit.WebView(this); temp.clearCache(true); temp.clearFormData(); temp.destroy();
                     getSharedPreferences("academic_snapshots",MODE_PRIVATE).edit().clear().commit();
                     getSharedPreferences("dekt_v1",MODE_PRIVATE).edit().clear().commit();
+                    DektRecordStore.clearAll(this);
+                    ElectricityStore.clearAll(this);
                     getSharedPreferences("activities_v1",MODE_PRIVATE).edit().clear().commit();
                     getSharedPreferences("xinxin_local_v1",MODE_PRIVATE).edit().clear().commit();
                     getSharedPreferences("timetables_v1",MODE_PRIVATE).edit().clear().commit();
