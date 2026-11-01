@@ -1,0 +1,100 @@
+package cn.xinxinxiangying.app;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.Locale;
+import java.util.regex.Pattern;
+
+/** 「学分认定」页读到的加分记录 → 本机快照。只做校验、去重与字段归一。 */
+public final class DektRecordParser {
+    private DektRecordParser() {}
+    private static final Pattern CREDIT = Pattern.compile("[+-]?\\d{1,3}(\\.\\d{1,4})?");
+    private static final Pattern DAY = Pattern.compile("\\d{4}-\\d{2}-\\d{2}( \\d{2}:\\d{2})?");
+    private static final int MAX_RECORDS = 800;
+
+    public static JSONObject parse(JSONObject payload) throws Exception {
+        if (payload == null) throw new IllegalArgumentException("没有读到页面内容，请刷新后重试");
+        JSONArray rows = payload.optJSONArray("records");
+        if (rows == null || rows.length() == 0)
+            throw new IllegalArgumentException("页面里没有找到学分认定记录，请确认已登录并按学校默认条件查询");
+        JSONArray records = new JSONArray();
+        for (int i = 0; i < rows.length() && records.length() < MAX_RECORDS; i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            String activity = text(row.optString("activity", ""), 120);
+            String credit = credit(row.optString("credit", ""));
+            if (activity.isEmpty() || credit.isEmpty()) continue;
+            records.put(new JSONObject()
+                .put("activity", activity)
+                .put("credit", credit)
+                .put("time", stamp(row.optString("time", "")))
+                .put("dl", text(row.optString("dl", ""), 40))
+                .put("lb", text(row.optString("lb", ""), 40))
+                .put("project", text(row.optString("project", ""), 60))
+                .put("year", text(row.optString("year", ""), 20))
+                .put("term", text(row.optString("term", ""), 20))
+                .put("source", text(row.optString("source", ""), 20)));
+        }
+        if (records.length() == 0) throw new IllegalArgumentException("读到的记录都不完整，请刷新后重试");
+        JSONObject snapshot = new JSONObject();
+        snapshot.put("records", records);
+        String total = payload.optString("total", "").trim();
+        if (!total.isEmpty() && total.matches("\\d{1,5}")) snapshot.put("total", total);
+        String pages = payload.optString("pages", "").trim();
+        if (!pages.isEmpty() && pages.matches("\\d{1,3}")) snapshot.put("pages", pages);
+        snapshot.put("importedAt", System.currentTimeMillis());
+        snapshot.put("source", SchoolCatalog.DEKT_RECORDS);
+        return snapshot;
+    }
+
+    /** 合并新旧快照：同一活动、同一分值、同一时间视为一条；新的排在前面。 */
+    public static JSONObject merge(JSONObject older, JSONObject newer) throws Exception {
+        JSONObject snapshot = new JSONObject(newer.toString());
+        JSONArray merged = new JSONArray();
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        append(merged, seen, newer.optJSONArray("records"));
+        if (older != null) append(merged, seen, older.optJSONArray("records"));
+        while (merged.length() > MAX_RECORDS) merged.remove(merged.length() - 1);
+        snapshot.put("records", merged);
+        return snapshot;
+    }
+
+    private static void append(JSONArray out, java.util.HashSet<String> seen, JSONArray rows) throws Exception {
+        if (rows == null) return;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            String key = row.optString("activity", "") + "|" + row.optString("credit", "")
+                + "|" + row.optString("time", "");
+            if (!seen.add(key)) continue;
+            out.put(row);
+        }
+    }
+
+    /** 认定学分只接受 -99～999 的数字，统一两位小数；其它写法丢弃这一条。 */
+    public static String credit(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (!CREDIT.matcher(value).matches()) return "";
+        try {
+            double number = Double.parseDouble(value);
+            if (number < -99 || number > 999) return "";
+            return String.format(Locale.ROOT, "%.2f", number);
+        } catch (NumberFormatException e) { return ""; }
+    }
+
+    /** 创建时间归一成「yyyy-MM-dd」或「yyyy-MM-dd HH:mm」；不认识的写法留空，界面不显示时间。 */
+    public static String stamp(String raw) {
+        String value = raw == null ? "" : raw.trim().replace('T', ' ');
+        int dot = value.indexOf('.');
+        if (dot > 10) value = value.substring(0, dot);
+        if (!DAY.matcher(value).matches()) return "";
+        return value;
+    }
+
+    private static String text(String raw, int max) {
+        String value = raw == null ? "" : raw.replace('\u00a0', ' ').trim();
+        value = value.replaceAll("\\s+", " ");
+        return value.length() > max ? value.substring(0, max) : value;
+    }
+}
