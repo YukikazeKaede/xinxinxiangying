@@ -22,6 +22,13 @@ public final class SchoolWebActivity extends Activity {
     private WebView web;
     private String paymentOwner="";private boolean paymentReady,retainPayment;
     private boolean authenticationAccepted;
+    private boolean cardForeground,cardExpired;
+    private volatile boolean cardGatewayAllowed;
+    private boolean cardPaying,cardResetAfterPay;
+    private int cardPayId;
+    private com.alipay.sdk.app.PayTask cardPayTask;
+    private Runnable cardPoll;
+    private int cardWatchId;
     private boolean autoSync, autoStopped, autoQueryStarted, rememberLogin;
     private boolean waitingForUser, sessionOnly, manualLoginSubmitted, passwordFromStore;
     private String pendingUsername="", pendingPassword="", loginScript="", navigationScript="",sessionScript="";
@@ -144,8 +151,8 @@ public final class SchoolWebActivity extends Activity {
         });
         web.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request) {
-                if(request.isForMainFrame()&&!SchoolCatalog.isSchoolUrl(request.getUrl().toString())) {
-                    // Also covers cross-origin form POSTs, which bypass shouldOverrideUrlLoading.
+                if(request.isForMainFrame()&&!isAllowedMainUrl(request.getUrl().toString())) {
+                    // Leave the observed payment POST to WebView: replacing it with loadUrl would discard its body.
                     runOnUiThread(()->status.setText("已停止外部页面 · 可在浏览器中继续"));
                     return new WebResourceResponse("text/plain","UTF-8",403,"External navigation blocked",java.util.Collections.emptyMap(),new java.io.ByteArrayInputStream(new byte[0]));
                 }
@@ -153,32 +160,40 @@ public final class SchoolWebActivity extends Activity {
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request) {
                 String url=request.getUrl().toString();
-                if(SchoolCatalog.isSchoolUrl(url)) return false;
-                if(request.isForMainFrame()) confirmExternal(url);
+                if(isAllowedMainUrl(url)) return false;
+                if(request.isForMainFrame()||("card".equals(service)&&isPaymentLink(url))) confirmExternal(url);
                 return true;
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,String url) {
-                if(SchoolCatalog.isSchoolUrl(url)) return false; confirmExternal(url); return true;
+                if(isAllowedMainUrl(url)) return false; confirmExternal(url); return true;
             }
             @Override public void onPageStarted(WebView view,String url,android.graphics.Bitmap icon) {
                 if(electricityRoomRestored)view.setEnabled(true);
-                paymentReady=false;
+                paymentReady=false;cardExpired=false;stopCardWatch();
                 navigationFailed=false;pageVersion++;
                 if(!SessionPolicy.isAuthHost(Uri.parse(url).getHost()))manualLoginSubmitted=false;
                 log("start "+pageVersion+" "+safeUrl(url));
-                if(!SchoolCatalog.isSchoolUrl(url)) {
+                boolean allowed=isAllowedMainUrl(url);
+                cardGatewayAllowed="card".equals(service)&&(SchoolCatalog.isSchoolUrl(url)&&"ecard.sit.edu.cn".equals(Uri.parse(url).getHost())
+                    ||allowed&&SchoolCatalog.isCardPaymentGateway(url));
+                if(!allowed) {
                     navigationFailed=true; view.stopLoading(); status.setText("已停止外部页面 · 可在浏览器中继续"); return;
                 }
                 status.setText(autoSync?currentSyncTask():"正在连接 · "+safeHost(url));
             }
-            @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))view.setVisibility(View.VISIBLE);}
+            @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&isAllowedMainUrl(url))view.setVisibility(View.VISIBLE);}
             @Override public void onPageFinished(WebView view,String url) {
                 if(url==null||!url.equals(view.getUrl()))return;
                 boolean authPage=!navigationFailed&&SchoolCatalog.isSchoolUrl(url)
                     &&SessionPolicy.isAuthHost(Uri.parse(url).getHost());
                 if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))
                     status.setText(autoSync?currentSyncTask():authPage?"请登录学校账号，完成后会回到当前服务":"校方页面 · "+safeHost(url));
+                if(!navigationFailed&&"card".equals(service)&&SchoolCatalog.isCardPaymentGateway(url))status.setText("支付宝支付页面 · 请在支付应用中核对并确认");
+                if(cardResetAfterPay&&!navigationFailed&&SchoolCatalog.isSchoolUrl(url)&&"ecard.sit.edu.cn".equals(Uri.parse(url).getHost())){
+                    cardResetAfterPay=false;view.clearHistory();status.setText("已返回校园卡 · 请核对学校充值记录");
+                }
                 CookieManager.getInstance().flush();
+                if(!navigationFailed&&"card".equals(service))startCardWatch();
                 if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
                     view.evaluateJavascript(timetableScript,null);
@@ -197,7 +212,7 @@ public final class SchoolWebActivity extends Activity {
                 if(!navigationFailed&&manualAfterNav)continueManualImport(url);
             }
             @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error) {
-                navigationFailed=true; handler.cancel(); stopForServerError("无法验证学校网站证书 · 登录状态未改变");
+                cardGatewayAllowed=false;navigationFailed=true; handler.cancel(); stopForServerError("无法验证学校网站证书 · 登录状态未改变");
                 new AlertDialog.Builder(SchoolWebActivity.this).setTitle("无法验证学校网站证书")
                     .setMessage("连接已停止。请检查手机日期、网络，或稍后重试。").setPositiveButton("知道了",null).show();
             }
@@ -208,7 +223,9 @@ public final class SchoolWebActivity extends Activity {
                 if(!request.isForMainFrame())return;
                 navigationFailed=true;
                 int code=response.getStatusCode();
+                if("card".equals(service)&&SchoolCatalog.isCardPaymentGateway(request.getUrl().toString())){cardGatewayAllowed=false;stopForServerError("支付宝页面未能加载 · 请先核对学校充值记录，不要重复提交");return;}
                 SessionPolicy.Action action=SessionPolicy.action(SessionPolicy.signalForHttp(code),autoSync);
+                if("card".equals(service)&&action==SessionPolicy.Action.REAUTH){offerCardRestart(pageVersion);return;}
                 if(action==SessionPolicy.Action.REAUTH){requestReauth("学校要求重新登录，请完成验证");return;}
                 if(action==SessionPolicy.Action.WAIT_FOR_USER){
                     autoStopped=true;revealSchool();status.setText("学校要求重新登录，请在本页完成验证");
@@ -243,6 +260,63 @@ public final class SchoolWebActivity extends Activity {
     }
     private String readAsset(String name){try(java.io.InputStream in=getAssets().open(name)){java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}catch(Exception e){return "";}}
     private String assetOrNull(String name){String value=readAsset(name);return value.isEmpty()?null:value;}
+    private boolean isAllowedMainUrl(String url){
+        return SchoolCatalog.isSchoolUrl(url)||("card".equals(service)&&cardGatewayAllowed&&isCurrentSession()&&SchoolCatalog.isCardPaymentGateway(url));
+    }
+    private boolean isPaymentSource(){
+        return web!=null&&isAllowedMainUrl(web.getUrl());
+    }
+    private void stopCardWatch(){cardWatchId++;if(cardPoll!=null)autoHandler.removeCallbacks(cardPoll);cardPoll=null;}
+    private void startCardWatch(){
+        stopCardWatch();
+        if(!"card".equals(service)||!cardForeground||cardExpired||web==null||!isCurrentSession())return;
+        final int version=pageVersion,watch=cardWatchId;
+        if(!"ecard.sit.edu.cn".equals(Uri.parse(web.getUrl()==null?"":web.getUrl()).getHost()))return;
+        final String script=readAsset("card-session.js");
+        if(script.isEmpty())return;
+        cardPoll=()->{
+            if(web==null||!cardForeground||cardExpired||watch!=cardWatchId||version!=pageVersion||!isCurrentSession()||!SchoolCatalog.isSchoolUrl(web.getUrl()))return;
+            web.evaluateJavascript(script,result->{
+                if(web==null||!cardForeground||watch!=cardWatchId||version!=pageVersion||!isCurrentSession())return;
+                if("expired".equals(unquote(result))){offerCardRestart(version);return;}
+                if(cardPoll!=null)autoHandler.postDelayed(cardPoll,1500);
+            });
+        };
+        autoHandler.post(cardPoll);
+    }
+    private void offerCardRestart(int version){
+        if(web==null||isFinishing()||isDestroyed()||version!=pageVersion||cardExpired||!isCurrentSession())return;
+        cardExpired=true;stopCardWatch();
+        status.setText("校园卡登录已过期 · 请重新打开正式入口");
+        new AlertDialog.Builder(this).setTitle("重新打开校园卡？")
+            .setMessage("学校提示登录已过期。重新打开后请自行核对充值记录；本应用不会重新提交充值或付款。")
+            .setNegativeButton("暂不",null).setPositiveButton("重新打开",(d,w)->{
+                if(web!=null&&version==pageVersion&&isCurrentSession())web.loadUrl(SchoolCatalog.CARD_ENTRY);
+            }).show();
+    }
+    private static boolean isPaymentLink(String url){
+        Intent intent=externalIntent(url);
+        return intent!=null&&intent.getPackage()!=null;
+    }
+    /** Rebuild from data only: never forward intent extras, components or fallback URLs from a web page. */
+    private static Intent externalIntent(String url){
+        try{
+            Uri uri=Uri.parse(url);String claimedPackage=null;
+            if("intent".equalsIgnoreCase(uri.getScheme())){
+                Intent parsed=Intent.parseUri(url,Intent.URI_INTENT_SCHEME);
+                uri=parsed.getData();claimedPackage=parsed.getPackage();
+                if(uri==null)return null;
+            }
+            String scheme=uri.getScheme()==null?"":uri.getScheme().toLowerCase(Locale.ROOT);
+            String target="weixin".equals(scheme)?"com.tencent.mm":("alipay".equals(scheme)||"alipays".equals(scheme))?"com.eg.android.AlipayGphone":null;
+            if(claimedPackage!=null&&!claimedPackage.equals(target))return null;
+            if(target==null&&(!"https".equals(scheme)||"intent".equalsIgnoreCase(Uri.parse(url).getScheme())))return null;
+            if(uri.getHost()==null||uri.getUserInfo()!=null)return null;
+            Intent out=new Intent(Intent.ACTION_VIEW,uri).addCategory(Intent.CATEGORY_BROWSABLE);
+            if(target!=null)out.setPackage(target);
+            return out;
+        }catch(Exception ignored){return null;}
+    }
     private void simplifyElectricity(String url,int version){
         Uri page=Uri.parse(url);
         if(!"https".equals(page.getScheme())||!"ecard.sit.edu.cn".equals(page.getHost())||!"/epay/h5/payele".equals(page.getPath()))return;
@@ -868,8 +942,8 @@ public final class SchoolWebActivity extends Activity {
             ?new String[]{"重新加载","前往学校系统首页","保存当前页","在系统浏览器打开","学校统一门户"}
             :new String[]{"重新加载","前往学校系统首页","在系统浏览器打开","学校统一门户"};
         new AlertDialog.Builder(this).setTitle("学校服务").setItems(items,(d,which)->{
-            if(which==0) web.reload();
-            else if(which==1) web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.isAcademic(service)?(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_HOME):SchoolCatalog.CARD_HOME);
+            if(which==0){if("card".equals(service))web.loadUrl(SchoolCatalog.CARD_ENTRY);else web.reload();}
+            else if(which==1) web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.isAcademic(service)?(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_HOME):"card".equals(service)?SchoolCatalog.CARD_ENTRY:SchoolCatalog.CARD_HOME);
             else if(which==items.length-1) web.loadUrl(SchoolCatalog.PORTAL);
             else if(which==2&&SchoolCatalog.isAcademic(service)) saveCurrentPage();
             else { String url=web.getUrl(); if(url!=null) confirmExternal(url); }
@@ -897,26 +971,54 @@ public final class SchoolWebActivity extends Activity {
                 });
             }).show();
     }
+    private void startCardPayment(String url,int version){
+        if(cardPaying||web==null||version!=pageVersion||!isCurrentSession()||!isPaymentSource()||!SchoolCatalog.isAlipayCashierUrl(url))return;
+        cardPaying=true;final int payId=++cardPayId;
+        try{
+            // Construct only after the user has confirmed the SDK privacy notice and payment handoff.
+            if(cardPayTask==null)cardPayTask=new com.alipay.sdk.app.PayTask(this);
+            boolean accepted=cardPayTask.payInterceptorWithUrl(url,true,result->runOnUiThread(()->finishCardPayment(version,payId)));
+            if(!accepted){cardPaying=false;status.setText("支付宝未识别该支付链接 · 已停止，不会重复提交充值");}
+        }catch(RuntimeException e){cardPaying=false;status.setText("支付宝支付服务未能启动 · 请先核对充值记录，不要重复提交");}
+    }
+    private void finishCardPayment(int version,int payId){
+        if(!cardPaying||payId!=cardPayId)return;
+        cardPaying=false;
+        if(web==null||isFinishing()||isDestroyed()||version!=pageVersion||!isCurrentSession())return;
+        // A callback is not proof of payment; ignore its result URL and refresh only the known school entry.
+        cardResetAfterPay=true;web.loadUrl(SchoolCatalog.CARD_ENTRY);
+    }
     private void confirmExternal(String url) {
-        Uri uri; try { uri=Uri.parse(url); } catch(Exception e) { return; }
-        String scheme=uri.getScheme();
-        if(scheme==null||!(scheme.equalsIgnoreCase("https")||scheme.equalsIgnoreCase("weixin")||scheme.equalsIgnoreCase("alipays")||scheme.equalsIgnoreCase("alipay"))) {
+        final boolean sdk="card".equals(service)&&SchoolCatalog.isAlipayCashierUrl(url);
+        final Intent external=sdk?null:externalIntent(url);
+        if((!sdk&&external==null)||((sdk||external.getPackage()!=null)&&(!isPaymentSource()||!isCurrentSession()))) {
             Toast.makeText(this,"此链接暂不支持，请从学校官方入口办理",Toast.LENGTH_LONG).show(); return;
         }
+        if(sdk&&cardPaying){Toast.makeText(this,"支付宝操作尚未结束，请先返回并核对充值记录",Toast.LENGTH_LONG).show();return;}
+        final int version=pageVersion;
+        String scheme=sdk?"alipays":external.getData().getScheme();
         String app=scheme.equalsIgnoreCase("https")?"浏览器（"+safeHost(url)+"）":scheme.equalsIgnoreCase("weixin")?"微信":"支付宝";
-        new AlertDialog.Builder(this).setTitle("打开"+app+"？").setMessage("将交给外部应用处理。若涉及缴费，请在支付页面核对收款方、金额和房间号；本应用不会自动确认付款。")
+        String message=sdk?"继续将使用支付宝支付服务，SDK 可能处理设备、应用和网络信息以完成支付及安全校验。请阅读支付宝支付 SDK 隐私说明。\n\n请在支付宝核对收款方与金额后自行付款。返回本应用不代表已到账，请核对学校充值记录。"
+            :"将交给外部应用处理。若涉及缴费，请在支付页面核对收款方、金额和房间号；本应用不会自动确认付款。";
+        AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle("打开"+app+"？").setMessage(message)
             .setNegativeButton("取消",null).setPositiveButton("打开",(d,w)->{
-                try { startActivity(new Intent(Intent.ACTION_VIEW,uri).addCategory(Intent.CATEGORY_BROWSABLE)); }
-                catch(ActivityNotFoundException e) { Toast.makeText(this,"没有可处理此链接的应用",Toast.LENGTH_LONG).show(); }
-            }).show();
+                if(sdk){startCardPayment(url,version);return;}
+                try { if(external.getPackage()==null||(version==pageVersion&&isCurrentSession()&&isPaymentSource()))startActivity(external); }
+                catch(ActivityNotFoundException|SecurityException e) { Toast.makeText(this,"未找到可用的支付应用或浏览器，请安装后重新打开校园卡入口",Toast.LENGTH_LONG).show(); }
+            });
+        if(sdk)dialog.setNeutralButton("隐私说明",(d,w)->{
+            try{startActivity(externalIntent("https://opendocs.alipay.com/open/54/01g6qm"));}
+            catch(ActivityNotFoundException|SecurityException e){Toast.makeText(this,"请在浏览器查看支付宝支付 SDK 隐私说明",Toast.LENGTH_LONG).show();}
+        });
+        dialog.show();
     }
     @Override public void onBackPressed() {
         if("code".equals(service)||!AppSession.valid(this)){leaveSchool();return;}
         if(autoSync&&!authenticationAccepted&&web!=null&&SessionPolicy.isLoginUrl(web.getUrl())){leaveSchool();return;}
         if(web!=null&&web.canGoBack())web.goBack();else finish();
     }
-    @Override protected void onPause() { if(web!=null) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); if(web!=null) web.onResume(); }
+    @Override protected void onPause() { cardForeground=false;stopCardWatch();if(web!=null) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
+    @Override protected void onResume() { super.onResume();cardForeground=true; if(web!=null){web.onResume();startCardWatch();} }
     @Override protected void onStop(){super.onStop();if("code".equals(service)&&!autoSync&&!isFinishing()){retainPayment=false;finish();}}
     @Override protected void onDestroy() {
         if(autoSync&&isFinishing())SchoolSession.endReauth(this,authFlowId);

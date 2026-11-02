@@ -15,12 +15,22 @@ public final class SchoolCatalogTest {
         check(SchoolCatalog.isAcademicUrl(SchoolCatalog.PG_HOME),"PG academic origin");
         for (String id:SchoolCatalog.IDS) for(boolean pg:new boolean[]{false,true})
             check(SchoolCatalog.isSchoolUrl(SchoolCatalog.url(id,pg)),"School-only catalog "+id);
+        check(SchoolCatalog.isCardPaymentGateway("https://openapi.alipay.com/gateway.do?method=alipay.trade.wap.pay"),"Observed payment form target");
+        check(!SchoolCatalog.isSchoolUrl("https://openapi.alipay.com/gateway.do"),"Payment gateway remains external to school");
+        for(String url:new String[]{null,"http://openapi.alipay.com/gateway.do","https://openapi.alipay.com.evil.example/gateway.do","https://evil@openapi.alipay.com/gateway.do","https://openapi.alipay.com:444/gateway.do","https://openapi.alipay.com/other","https://openapi.alipay.com/%67ateway.do","https://openapi.alipay.com/gateway.do#other"})
+            check(!SchoolCatalog.isCardPaymentGateway(url),"Reject unofficial payment target");
+        check(SchoolCatalog.isAlipayCashierUrl("https://mclient.alipay.com/cashier/mobilepay.htm?SYNTHETIC=1"),"Observed cashier redirect host");
+        for(String url:new String[]{null,"http://mclient.alipay.com/cashier/mobilepay.htm","https://mclient.alipay.com.evil.example/","https://evil@mclient.alipay.com/","https://mclient.alipay.com:444/","https://evil.example/?url=https://mclient.alipay.com/","https://openapi.alipay.com/gateway.do"})
+            check(!SchoolCatalog.isAlipayCashierUrl(url),"Reject unofficial cashier redirect");
         check(SchoolCatalog.PG_HOME.equals(SchoolCatalog.url("grades",true)),"Do not invent PG grades endpoint");
         check(SchoolCatalog.UG_KB_ENTRY.equals(SchoolCatalog.url("timetable",false)),"Timetable opens the school's own weekly query entry");
         check(SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_KB_ENTRY),"Weekly query entry is academic");
         check(SchoolCatalog.isAcademicUrl(SchoolCatalog.UG_KB_JSON),"Course JSON endpoint stays academic");
         check(SchoolCatalog.UG_KB_JSON.startsWith("https://jwxt.sit.edu.cn/jwglxt/kbcx/"),"Course JSON uses the observed menu path");
-        check(SchoolCatalog.CARD_HOME.equals(SchoolCatalog.url("card",false)),"Do not invent recharge endpoint");
+        check(SchoolCatalog.CARD_ENTRY.equals(SchoolCatalog.url("card",false)),"Recharge uses the observed official app SSO entry");
+        check(SchoolCatalog.CARD_ENTRY.equals(SchoolCatalog.url("card",true)),"Recharge entry is shared by student types");
+        check(SchoolCatalog.url("code",false).endsWith("/epay/h5/v5qrcode"),"Payment code keeps its own entry");
+        check(SchoolCatalog.ELECTRICITY.equals(SchoolCatalog.url("electricity",false)),"Electricity entry is unchanged");
         check(SchoolCatalog.UG_EXAMS.equals(SchoolCatalog.url("exams",false)),"Exam schedule uses the observed module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("grades",false)),"Grades use the observed score module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("gpa",false)),"GPA is derived from the same score module");

@@ -10,6 +10,7 @@ public final class SchoolCatalog {
     public static final String UG_HOME = "https://jwxt.sit.edu.cn/";
     public static final String PG_HOME = "https://yjsgl.sit.edu.cn/login/loginSso";
     public static final String CARD_HOME = "https://ecard.sit.edu.cn/epay/h5/index";
+    public static final String CARD_ENTRY = "https://ecard.sit.edu.cn/openservice/sso/authForApp";
     public static final String ELECTRICITY = "https://ecard.sit.edu.cn/epay/h5/payele";
     public static final String PORTAL = "https://portal.sit.edu.cn";
     /** 学校菜单里的「学生课表查询（按周次）」页，登录后可直接打开（同源、无凭据）。 */
@@ -55,6 +56,23 @@ public final class SchoolCatalog {
                 && uri.getRawUserInfo() == null && (uri.getPort() == -1 || uri.getPort() == 443);
         } catch (IllegalArgumentException e) { return false; }
     }
+    /** Exact observed H5 form target; this does not make Alipay a school origin. */
+    public static boolean isCardPaymentGateway(String url) {
+        try {
+            URI uri=URI.create(url);
+            return "https".equalsIgnoreCase(uri.getScheme())&&"openapi.alipay.com".equalsIgnoreCase(uri.getHost())
+                &&uri.getRawUserInfo()==null&&(uri.getPort()==-1||uri.getPort()==443)
+                &&"/gateway.do".equals(uri.getRawPath())&&uri.getRawFragment()==null;
+        } catch(Exception e){return false;}
+    }
+    /** The observed cashier redirect is opened in Alipay, never added to school origins. */
+    public static boolean isAlipayCashierUrl(String url) {
+        try {
+            URI uri=URI.create(url);
+            return "https".equalsIgnoreCase(uri.getScheme())&&"mclient.alipay.com".equalsIgnoreCase(uri.getHost())
+                &&uri.getRawUserInfo()==null&&(uri.getPort()==-1||uri.getPort()==443)&&uri.getRawFragment()==null;
+        }catch(Exception e){return false;}
+    }
     public static boolean isAcademicUrl(String url) {
         if (!isSchoolUrl(url)) return false;
         String host = URI.create(url).getHost();
@@ -83,7 +101,8 @@ public final class SchoolCatalog {
         if ("second_activities".equals(id)) return DEKT_ACTIVITIES;
         if ("code".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/v5qrcode";
         if ("electricity".equals(id)) return ELECTRICITY;
-        // No recharge create-order endpoint has been verified: enter the official homepage.
+        if ("card".equals(id)) return CARD_ENTRY;
+        // Other services retain the original school homepage.
         return CARD_HOME;
     }
 }
