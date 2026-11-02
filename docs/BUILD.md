@@ -2,10 +2,10 @@
 
 本项目不使用 Gradle，`build.ps1` 直接调用 JDK 与 Android SDK 命令：
 
-1. `aapt2 compile` 编译 `app/src/main/res`；
+1. 下载/校验固定支付宝 SDK，再用 `aapt2 compile` 分别编译应用与 SDK 资源；
 2. `aapt2 link` 生成 APK（`resources.arsc` 以 ZIP stored 方式写入并对齐）；
-3. `javac` 编译 Java 源码；
-4. `d8` 生成 `classes.dex`；
+3. `javac` 以 SDK classes.jar 为 classpath 编译源码；
+4. `d8` 将应用与 SDK 一起生成 dex；
 5. .NET `ZipArchive` 把 dex 追加到 APK；
 6. 自定义对齐逻辑规范化 Windows aapt2 生成的嵌套 assets 路径，并执行 `zipalign -c 4`；
 7. `apksigner` 签名并校验。
@@ -33,6 +33,17 @@ toolchain/
 ```
 
 也可用 `-JavaHome` 指定 JDK；Android 工具路径在 `build.ps1` 顶部的 `$tools` 与 `$androidJar`。仓库不提交 `toolchain/`，请从本机 Android SDK 复制对应文件。
+
+## 支付 SDK 特例
+
+本次经用户明确批准，为校园卡支付返回接入官方 `com.alipay.sdk:alipaysdk-android:15.8.42`，不是一般引入新依赖的许可。SDK 从 Maven Central 的发布坐标取得，未运行 Maven 或 Gradle。`build.ps1` 调用 `tools/get-alipay-sdk.ps1`，每次验证 AAR SHA-256 后重新提取 classes.jar 与资源；首次需要联网，此后可用完整性校验通过的缓存离线构建。
+
+- 官方 SDK 坐标：`https://repo.maven.apache.org/maven2/com/alipay/sdk/alipaysdk-android/15.8.42/`
+- 固定 AAR SHA-256：`a6c301708b59a3a7cda843cf02e7b3b0b44afd96819f0a18890322e9868abf28`
+- 缓存：`toolchain/alipay/15.8.42/`，二进制不进入源码仓库；不手改提取文件。
+- `aapt2 --extra-packages com.alipay.sdk` 生成 SDK 资源类，SDK 资源与应用资源分别编译，避免同名 values 编译产物相互覆盖。
+- Manifest 手工声明支付组件、支付宝单包可见性和可选 legacy HTTP 运行库；没有自动合并 SDK AAR 的权限，没有新增 Android 权限。`queries` 包查询不是 `QUERY_ALL_PACKAGES` 权限。
+- SDK 升级、摘要变更或新增权限均须重新评审，不自动追随 latest。Windows PowerShell 源码保持 ASCII。
 
 ## 签名
 

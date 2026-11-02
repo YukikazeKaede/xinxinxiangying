@@ -88,6 +88,7 @@ foreach ($required in @('bin/java.exe', 'bin/javac.exe', 'bin/keytool.exe')) {
 foreach ($required in @($androidJar, (Join-Path $tools 'aapt2.exe'), (Join-Path $tools 'zipalign.exe'), (Join-Path $tools 'core-lambda-stubs.jar'), (Join-Path $tools 'lib/d8.jar'), (Join-Path $tools 'lib/apksigner.jar'))) {
     if (-not (Test-Path -LiteralPath $required)) { throw "Required Android tool missing: $required" }
 }
+$alipaySdk = & (Join-Path $project 'tools/get-alipay-sdk.ps1') -ProjectRoot $project
 $classes = Join-Path $build 'classes'
 $dex = Join-Path $build 'dex'
 $generated = Join-Path $build 'generated'
@@ -120,9 +121,13 @@ foreach ($resource in Get-ChildItem -LiteralPath $resourceRoot -File -Recurse) {
 }
 $compiledFiles = @(Get-ChildItem -LiteralPath $flat -Filter '*.flat' -File | ForEach-Object { $_.FullName })
 if (Test-Path -LiteralPath $unsigned) { Remove-Item -LiteralPath $unsigned -Force }
+$sdkResources = Join-Path $build 'alipay-res.zip'
+if (Test-Path -LiteralPath $sdkResources) { Remove-Item -LiteralPath $sdkResources -Force }
+Invoke-Checked (Join-Path $tools 'aapt2.exe') @('compile', '--dir', $alipaySdk.Resources, '-o', $sdkResources)
 $linkArgs = @('link', '-o', $unsigned, '-I', $androidJar, '--manifest', (Join-Path $project 'app/src/main/AndroidManifest.xml'), '--java', $generated, '--min-sdk-version', '24', '--target-sdk-version', '36') + $compiledFiles
 $assets = Join-Path $project 'app/src/main/assets'
 if (Test-Path -LiteralPath $assets) { $linkArgs += @('-A', $assets) }
+$linkArgs += @('--extra-packages', 'com.alipay.sdk', $sdkResources)
 Invoke-Checked (Join-Path $tools 'aapt2.exe') $linkArgs
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -132,9 +137,9 @@ $sourceList = Join-Path $build 'sources.txt'
 $sourceLines = $sources | ForEach-Object { '"' + $_.FullName.Replace('\', '/') + '"' }
 [IO.File]::WriteAllLines($sourceList, [string[]]$sourceLines, [Text.UTF8Encoding]::new($false))
 $javaBootClasspath = $androidJar + [IO.Path]::PathSeparator + (Join-Path $tools 'core-lambda-stubs.jar')
-Invoke-Checked (Join-Path $JavaHome 'bin/javac.exe') @('-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', $javaBootClasspath, '-d', $classes, ('@' + $sourceList))
+Invoke-Checked (Join-Path $JavaHome 'bin/javac.exe') @('-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', $javaBootClasspath, '-cp', $alipaySdk.ClassesJar, '-d', $classes, ('@' + $sourceList))
 $classFiles = @(Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse -File | ForEach-Object { $_.FullName })
-Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') (@('-cp', (Join-Path $tools 'lib/d8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '24', '--lib', $androidJar, '--output', $dex) + $classFiles)
+Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') (@('-cp', (Join-Path $tools 'lib/d8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '24', '--lib', $androidJar, '--output', $dex) + $classFiles + @($alipaySdk.ClassesJar))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($unsigned, [IO.Compression.ZipArchiveMode]::Update)
 try {
