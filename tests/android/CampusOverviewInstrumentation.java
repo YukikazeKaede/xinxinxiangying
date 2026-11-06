@@ -120,7 +120,7 @@ public final class CampusOverviewInstrumentation extends Instrumentation {
                 call("renderDetail",new Class<?>[]{});
             });
             check(text(root,"报名已满") instanceof Button&&!text(root,"报名已满").isEnabled(),"full activity never enables native signup");
-            check((a.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)!=0,"screenshot protection retained");
+            check((a.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)==0,"activity page allows screenshots");
             ui(()->{set(a,"detail",null);call("render",new Class<?>[]{});text(root,"我的活动").performClick();});
             check(new JSONObject((String)field(a,"plan")).optBoolean("mine"),"my activities changes the server query");
             check(text(root,"SYNTHETIC_FULL")==null,"all-activity cache never masquerades as my activities");
@@ -152,7 +152,7 @@ public final class CampusOverviewInstrumentation extends Instrumentation {
             check(text(creditRoot,"SYNTHETIC_CREDIT_CHILD")==null,"credit card collapses");
             ui(()->((View)text(creditRoot,"德育").getParent()).performClick());
             check(text(creditRoot,"SYNTHETIC_CREDIT_CHILD")!=null&&text(creditRoot,"查看活动")!=null,"credit card reopens and has activity action");
-            check((dekt.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)!=0,"credit screenshot protection stays enabled");
+            check((dekt.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)==0,"credit page allows screenshots");
             ui(()->{View v=(View)field(dekt,"content");v.measure(View.MeasureSpec.makeMeasureSpec(1080,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(4000,View.MeasureSpec.AT_MOST));v.layout(0,0,v.getMeasuredWidth(),v.getMeasuredHeight());renderArtifact(v,"credits.png");dekt.finish();});
             JSONObject grades=AcademicParser.parse("grades",new JSONObject().put("allTerms",true).put("items",new JSONArray()
                 .put(new JSONObject().put("kcmc","SYNTHETIC_OLD").put("xf","4").put("jd","4"))

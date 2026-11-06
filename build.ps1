@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $project = $PSScriptRoot
+& (Join-Path $project 'tools/check-screenshot-policy.ps1') -ProjectRoot $project
 $build = Join-Path $project 'build'
 $dist = Join-Path $project 'dist'
 $tools = Join-Path $project 'toolchain/sdk/android-16'

@@ -148,7 +148,7 @@ public final class SecondClassroomInstrumentation extends Instrumentation {
             check(text(root, "SYNTHETIC_CHILD") != null, "credit children start expanded");
             ui(() -> ((View) text(activity.getWindow().getDecorView(), "SYNTHETIC_CATEGORY").getParent()).performClick());
             check(text(root, "SYNTHETIC_CHILD") == null, "credit category collapses");
-            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0, "credit screenshot protection retained");
+            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) == 0, "credit page allows screenshots");
             close();
             launch(ActivitiesActivity.class);
             root = activity.getWindow().getDecorView();
@@ -167,7 +167,7 @@ public final class SecondClassroomInstrumentation extends Instrumentation {
             View signed = text(root, "已报名");
             check(signed != null, "detail shows school signup state");
             check(!button(root, "已报名").isEnabled(), "signed activity cannot be submitted again");
-            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0, "activity screenshot protection retained");
+            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) == 0, "activity page allows screenshots");
             ui(() -> {
                 set(activity, "detail", new JSONObject().put("id", "SYNTHETIC_B").put("name", "SYNTHETIC_DETAIL").put("end", "2000-01-01 00:00:00"));
                 call(activity, "renderDetail");

@@ -26,10 +26,9 @@ public final class CampusProfileInstrumentation extends Instrumentation {
         return null;
     }
     private void capture(String name)throws Exception{
-        SystemClock.sleep(2500);runOnMainSync(()->main.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE));SystemClock.sleep(300);
+        SystemClock.sleep(2500);check((main.getWindow().getAttributes().flags&WindowManager.LayoutParams.FLAG_SECURE)==0,"profile allows screenshots by default");SystemClock.sleep(300);
         Bitmap image=getUiAutomation().takeScreenshot();check(image!=null,"synthetic screenshot");
         try(OutputStream out=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),name))){image.compress(Bitmap.CompressFormat.PNG,100,out);}image.recycle();
-        runOnMainSync(()->main.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE));
     }
     private Object field(Object target,String name)throws Exception{java.lang.reflect.Field f=target.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(target);}
     private void checkElectricity(Context c)throws Exception{
