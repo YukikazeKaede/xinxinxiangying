@@ -96,7 +96,7 @@ public final class DektRecordsInstrumentation extends Instrumentation {
             launch(DektActivity.class);
             View root = activity.getWindow().getDecorView();
             check(text(root, "加分记录") != null, "record entry is reachable");
-            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0, "screenshot protection retained");
+            check((activity.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) == 0, "credit page allows screenshots");
             click("SYNTHETIC_CHILD");
             check(text(root, "SYNTHETIC_NEW_ACTIVITY") != null && text(root, "SYNTHETIC_OLD_ACTIVITY") != null, "records expand under category");
             click("2025-2026");

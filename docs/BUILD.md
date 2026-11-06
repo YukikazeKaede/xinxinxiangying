@@ -2,6 +2,10 @@
 
 本项目不使用 Gradle，`build.ps1` 直接调用 JDK 与 Android SDK 命令：
 
+构建开始时先运行 `tools/check-screenshot-policy.ps1`：支付宝 SDK 支付界面保留其自带防截屏保护，其余应用自有页面与测试允许截屏、录屏。自有源码新增截屏限制或测试临时修改截屏标志时，构建直接失败；这一检查持续适用于后续所有版本。
+
+运行 `powershell -NoProfile -File tests/screenshot-policy.test.ps1` 可验证该规则：覆盖正常页面、SDK 例外、窗口标志、最近任务、Surface、设备策略，以及测试临时修改标志等合成场景。
+
 1. 下载/校验固定支付宝 SDK，再用 `aapt2 compile` 分别编译应用与 SDK 资源；
 2. `aapt2 link` 生成 APK（`resources.arsc` 以 ZIP stored 方式写入并对齐）；
 3. `javac` 以 SDK classes.jar 为 classpath 编译源码；

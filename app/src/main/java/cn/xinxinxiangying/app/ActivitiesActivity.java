@@ -13,7 +13,6 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
-import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebChromeClient;
@@ -78,7 +77,6 @@ public final class ActivitiesActivity extends Activity {
     @Override public void onCreate(Bundle bundle) {
         super.onCreate(bundle);
         CampusUi.window(this);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         store = new ActivityStore(this);
         pg = getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false);
         if (!AppSession.require(this, "second_activities")) return;

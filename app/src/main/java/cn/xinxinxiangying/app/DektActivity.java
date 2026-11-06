@@ -11,7 +11,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
-import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.SslErrorHandler;
 import android.webkit.WebChromeClient;
@@ -74,7 +73,6 @@ public final class DektActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         CampusUi.window(this);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         store = new DektStore(this);
         recordStore = new DektRecordStore(this);
         pg = getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false);

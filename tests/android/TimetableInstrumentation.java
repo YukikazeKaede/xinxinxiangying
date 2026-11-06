@@ -30,11 +30,12 @@ public final class TimetableInstrumentation extends Instrumentation {
         Activity a=startActivitySync(i);activities.add(a);waitForIdleSync();return a;
     }
     private void screenshot(String name)throws Exception {
-        final java.util.ArrayList<Activity> secured=new java.util.ArrayList<>();runOnMainSync(()->{for(Activity a:activities)if(!a.isFinishing()&&(a.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)!=0){secured.add(a);a.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);}});
+        waitForIdleSync();
+        for(Activity a:activities)if(!a.isFinishing())check((a.getWindow().getAttributes().flags&android.view.WindowManager.LayoutParams.FLAG_SECURE)==0,a.getClass().getSimpleName()+" allows screenshots by default");
         SystemClock.sleep(500);Bitmap bitmap=getUiAutomation().takeScreenshot();check(bitmap!=null,"screenshot available");
         File directory=getTargetContext().getExternalFilesDir(null);
         if(directory==null)directory=getTargetContext().getFilesDir();
-        try(FileOutputStream stream=new FileOutputStream(new File(directory,name))){bitmap.compress(Bitmap.CompressFormat.PNG,100,stream);}bitmap.recycle();runOnMainSync(()->{for(Activity a:secured)if(!a.isFinishing())a.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);});
+        try(FileOutputStream stream=new FileOutputStream(new File(directory,name))){bitmap.compress(Bitmap.CompressFormat.PNG,100,stream);}bitmap.recycle();
     }
     private AccessibilityNodeInfo find(AccessibilityNodeInfo root,String text){
         if(root==null)return null;if(root.getText()!=null&&text.equals(root.getText().toString()))return root;
@@ -46,12 +47,6 @@ public final class TimetableInstrumentation extends Instrumentation {
         for(int i=0;i<root.getChildCount();i++){AccessibilityNodeInfo found=findDescription(root.getChild(i),description);if(found!=null)return found;}return null;
     }
     private boolean clickDescription(String description){AccessibilityNodeInfo node=findDescription(getUiAutomation().getRootInActiveWindow(),description);return node!=null&&node.performAction(AccessibilityNodeInfo.ACTION_CLICK);}
-    private void publicFixtureScreenshot(Activity a,String name)throws Exception{
-        // Only locally generated fixtures. Production keeps FLAG_SECURE on school/account screens.
-        runOnMainSync(()->a.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE));
-        screenshot(name);
-        runOnMainSync(()->a.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE));
-    }
     private String uiText(AccessibilityNodeInfo root){if(root==null)return "";StringBuilder text=new StringBuilder();if(root.getText()!=null)text.append(root.getText()).append(" | ");for(int i=0;i<root.getChildCount();i++)text.append(uiText(root.getChild(i)));return text.toString();}
     private void restore(SharedPreferences prefs,Map<String,?> entries){SharedPreferences.Editor e=prefs.edit().clear();for(Map.Entry<String,?> item:entries.entrySet()){Object value=item.getValue();if(value instanceof String)e.putString(item.getKey(),(String)value);if(value instanceof Boolean)e.putBoolean(item.getKey(),(Boolean)value);}e.commit();}
     @Override public void onStart(){
@@ -90,11 +85,11 @@ public final class TimetableInstrumentation extends Instrumentation {
                 });
                 view.loadUrl("https://jwxt.sit.edu.cn/jwglxt/kbcx/test.html");
             });
-            SystemClock.sleep(1800);waitForIdleSync();publicFixtureScreenshot(page,"ui-web.png");
+            SystemClock.sleep(1800);waitForIdleSync();screenshot("ui-web.png");
             java.lang.reflect.Method method=SchoolWebActivity.class.getDeclaredMethod("importCurrentTimetable");method.setAccessible(true);
             runOnMainSync(()->{try{method.invoke(page);}catch(Exception e){throw new RuntimeException(e);}});
             SystemClock.sleep(1600);waitForIdleSync();check(find(getUiAutomation().getRootInActiveWindow(),"导入本机")!=null,"WebView extraction reaches native preview");
-            publicFixtureScreenshot(page,"ui-import-preview.png");
+            screenshot("ui-import-preview.png");
             check(clickText("取消"),"cancel preview");SystemClock.sleep(500);check(before.equals(repo.read().toString()),"cancel preserves prior timetable");
             runOnMainSync(()->{try{method.invoke(page);}catch(Exception e){throw new RuntimeException(e);}});
             SystemClock.sleep(1000);check(clickText("导入本机"),"confirm import");SystemClock.sleep(1000);
@@ -107,10 +102,10 @@ public final class TimetableInstrumentation extends Instrumentation {
             
             check(clickDescription("工具"),"bottom navigation opens campus");SystemClock.sleep(600);waitForIdleSync();
             check(find(getUiAutomation().getRootInActiveWindow(),"校园卡")!=null,"campus service shortcuts visible");
-            Activity campus=timetable;check(campus==timetable,"campus shares timetable activity");publicFixtureScreenshot(campus,"ui-campus.png");
+            Activity campus=timetable;check(campus==timetable,"campus shares timetable activity");screenshot("ui-campus.png");
             check(clickDescription("我的"),"bottom navigation opens profile");SystemClock.sleep(500);waitForIdleSync();
             check(find(getUiAutomation().getRootInActiveWindow(),"学生类型")!=null,"profile contains student identity");
-            publicFixtureScreenshot(campus,"ui-profile.png");
+            screenshot("ui-profile.png");
             check(clickDescription("课表"),"profile navigation returns to timetable");SystemClock.sleep(500);waitForIdleSync();
             check(find(getUiAutomation().getRootInActiveWindow(),"登录并同步课表")!=null,"return to empty timetable");
             check(clickDescription("课表设置"),"timetable settings action");SystemClock.sleep(300);
