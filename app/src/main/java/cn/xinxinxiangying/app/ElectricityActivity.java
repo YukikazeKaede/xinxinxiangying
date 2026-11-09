@@ -129,7 +129,7 @@ public final class ElectricityActivity extends Activity {
             @Override public void onPageFinished(WebView view, String url) {
                 if (view != web || isFinishing() || !store.isCurrent() || !url.equals(view.getUrl()) || operation.isEmpty()) return;
                 CookieManager.getInstance().flush();
-                if (SessionPolicy.isAuthHost(Uri.parse(url).getHost())) { authenticate(); return; }
+                if (SessionPolicy.isAuthHost(Uri.parse(url).getHost())) { inspectAuth(); return; }
                 if (url.startsWith("https://ecard.sit.edu.cn/") && Uri.parse(url).getPath().contains("login")) { showSchool(true); return; }
                 if (!isElectricityPage(url)) { failed("学校电费页面尚未就绪，请返回后重试"); return; }
                 final int token = generation;
@@ -284,6 +284,27 @@ public final class ElectricityActivity extends Activity {
             .putExtra("postgraduate", getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false))
             .putExtra("electricityRoom", saved.optJSONObject("room").toString()));
     }
+    /**
+     * The school answers a rejected application with its own error page instead of a login form.
+     * Reading those words is the difference between a clear reason and an endless 正在读取.
+     */
+    private void inspectAuth() {
+        final int token = generation;
+        web.evaluateJavascript("(function(){var t=(document.body&&document.body.innerText)||'';"
+            + "if(t.indexOf('未授权的访问')>=0||t.indexOf('不允许访问目标应用')>=0)return 'denied';"
+            + "if(t.indexOf('应用未注册')>=0)return 'unregistered';"
+            + "return document.querySelector('input[type=password]')?'login':'other';})()", value -> {
+            if (!active(token)) return;
+            String state = text(value);
+            if ("denied".equals(state)) { failed("学校未向本账号开放电费应用（未授权的访问），请联系一卡通中心"); return; }
+            if ("unregistered".equals(state)) { failed("学校电费应用未在统一认证注册，请联系信息化办公室"); return; }
+            authenticate();
+        });
+    }
+    private static String text(String value) {
+        try { Object parsed = new JSONTokener(value).nextValue(); return parsed instanceof String ? (String) parsed : ""; }
+        catch (Exception ignored) { return ""; }
+    }
     private void authenticate() {
         final int token = generation;
         if (loginScript.isEmpty()) { showSchool(true); return; }
@@ -297,7 +318,7 @@ public final class ElectricityActivity extends Activity {
         attemptedLogin = true;
         web.evaluateJavascript(loginScript.replace("__CREDENTIALS__", credentials.toString()), value -> {
             if (!active(token)) return;
-            String state = ""; try { Object parsed = new JSONTokener(value).nextValue(); if (parsed instanceof String) state = (String) parsed; } catch (Exception ignored) { }
+            String state = text(value);
             if ("rejected".equals(state)) new SchoolAccount(this).forget(pg);
             if ("submitted".equals(state)) handler.postDelayed(() -> { if (active(token) && SessionPolicy.isAuthHost(Uri.parse(web.getUrl()).getHost())) authenticate(); }, 1000);
             else if (!"not-login".equals(state)) showSchool(true);
