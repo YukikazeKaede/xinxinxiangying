@@ -1,9 +1,17 @@
-// Restore the saved school selectors, submit the school's read-only query step, then read the
-// labelled balance. Never clicks recharge, amount or payment controls.
+// Reads the dormitory balance from the school's own read-only endpoints.
+//
+// Balance: the saved ids are used to address /epay/h5/eleresult directly. If the
+// result page carries no labelled balance the ids are rebuilt through the
+// /epay/h5/get*.json cascade the official app uses, then the result page is
+// opened again. Recharge, amount and payment controls are never touched.
+//
+// Choosing and restoring a room still drive the school's own cascading pickers,
+// because the recharge page is the school's page and must look untouched.
 (function () {
     'use strict';
     var plan = __ELECTRICITY_PLAN__;
     var HOST = 'ecard.sit.edu.cn';
+    var RESULT = '/epay/h5/eleresult';
     function trusted() {
         return location.protocol === 'https:' && location.hostname === HOST
             && (!location.port || location.port === '443') && !location.username && !location.password
@@ -226,85 +234,217 @@
     var read = plan.action === 'balance', expected = wantedRoom(plan.room);
     var state = window.__xinxinElectricityPage;
     if (state && state.status !== 'pending') return JSON.stringify(state);
-    if (!state && read && !field('room')) {
-        // The school may keep the queried room for the session: read the result page directly.
-        var already = balances();
-        if (already) {
-            var shownAlready = roomOnPage();
-            if (!expected || shownAlready !== expected) return JSON.stringify(fail('room'));
-            return JSON.stringify({status: 'complete', room: plan.room, balance: already, page: 'result'});
-        }
+
+    /* ---------- balance: the school's own JSON cascade, no picker driving ---------- */
+    function isResult() { return /^\/epay\/h5\/eleresult/.test(location.pathname); }
+    function byRole(role) {
+        var rows = plan.room.fields;
+        for (var i = 0; i < rows.length; i++) if (rows[i].role === role) return rows[i];
+        return null;
     }
-    state = window.__xinxinElectricityPage = {status: 'pending', stage: 'room', page: 'selection'};
-    var started = Date.now(), index = 0, stable = '', same = 0, asked = false, empty = 0;
-    function finish(status, reason) { state.status = status; state.reason = reason || ''; }
-    (function step() {
-        if (window.__xinxinElectricityPage !== state || state.status !== 'pending') return;
-        if (!trusted()) return finish('failed', 'moved');
-        if (document.querySelector('input[type=password]')) return finish('failed', 'login');
-        if (Date.now() - started > 45000) return finish('failed', 'timeout');
-        var $ = window.jQuery;
-        if ($ && $.active > 0) return setTimeout(step, 300);
-        if (!field('room')) {
-            // The school's result page (fresh document, or swapped in place after 下一步): it carries
-            // the room and a labelled balance instead of the selectors.
-            var result = balances();
-            if (result) {
-                var shownResult = roomOnPage();
-                if (!expected || shownResult !== expected) return finish('failed', 'room');
-                state.room = plan.room;
-                state.balance = result;
-                state.page = 'result';
+    function named(role) { var row = byRole(role); return row ? clean(row.title) : ''; }
+    function resultUrl() {
+        var sysid = byRole('elesys'), school = byRole('school'), build = byRole('build'), bedroom = byRole('room');
+        if (!sysid || !school || !build || !bedroom) return '';
+        return RESULT + '?sysid=' + encodeURIComponent(clean(sysid.value))
+            + '&roomid=' + encodeURIComponent(clean(bedroom.value))
+            + '&areaid=' + encodeURIComponent(clean(school.value))
+            + '&buildid=' + encodeURIComponent(clean(build.value));
+    }
+    function canNavigate() {
+        return typeof location.replace === 'function' || typeof location.assign === 'function';
+    }
+    function open(url) {
+        if (typeof location.replace === 'function') location.replace(url); else location.assign(url);
+    }
+    function csrf() {
+        var header = document.querySelector('meta[name=_csrf_header]'), token = document.querySelector('meta[name=_csrf]');
+        return header && token && clean(header.content) && clean(token.content)
+            ? {name: clean(header.content), value: clean(token.content)} : null;
+    }
+    function pairs(value) {
+        var out = [];
+        for (var name in value) if (Object.prototype.hasOwnProperty.call(value, name))
+            out.push(encodeURIComponent(name) + '=' + encodeURIComponent(value[name]));
+        return out.join('&');
+    }
+    /** The page script posts the first step as JSON and every deeper step as a form. */
+    function post(path, body, asForm) {
+        var headers = {}, token = csrf();
+        if (token) headers[token.name] = token.value;
+        headers['Content-Type'] = asForm ? 'application/x-www-form-urlencoded; charset=UTF-8' : 'application/json';
+        return fetch(path, {
+            method: 'POST', credentials: 'same-origin', headers: headers,
+            body: asForm ? pairs(body) : JSON.stringify(body)
+        }).then(function (response) {
+            if (!response.ok) throw new Error('http ' + response.status);
+            return response.json();
+        }).then(function (json) {
+            if (String(json.retcode) !== '0') throw new Error(json.retmsg || 'retcode');
+            return json.list || [];
+        });
+    }
+    function idIn(list, nameKey, idKey, want) {
+        for (var i = 0; i < list.length; i++) if (clean(list[i][nameKey]) === want) return clean(list[i][idKey]);
+        return '';
+    }
+    function first(list, idKey) { return list && list.length ? clean(list[0][idKey]) : ''; }
+    /** Rebuilds the six ids from the school's own cascade, then opens the result page once. */
+    function rebuild(target) {
+        var sysid = '', areaid = '', districtid = '', buildid = '', floorid = '';
+        post('/epay/h5/getelesys.json', {}, false).then(function (list) {
+            sysid = idIn(list, 'elcname', 'elcsysid', '新电费缴纳') || first(list, 'elcsysid');
+            if (!sysid) throw new Error('elesys');
+            return post('/epay/h5/getarea.json', {sysid: sysid}, true);
+        }).then(function (list) {
+            areaid = idIn(list, 'areaName', 'areaId', '奉贤校区') || first(list, 'areaId');
+            if (!areaid) throw new Error('area');
+            return post('/epay/h5/getdistrict.json', {sysid: sysid, areaid: areaid}, true);
+        }).then(function (list) {
+            districtid = idIn(list, 'districtName', 'districtId', '住宿区') || first(list, 'districtId');
+            if (!districtid) throw new Error('district');
+            return post('/epay/h5/getbuild.json', {sysid: sysid, areaid: areaid, districtid: districtid}, true);
+        }).then(function (list) {
+            buildid = idIn(list, 'buiName', 'buiId', named('build'));
+            if (!buildid) throw new Error('build');
+            return post('/epay/h5/getfloor.json',
+                {sysid: sysid, areaid: areaid, districtid: districtid, buildid: buildid}, true);
+        }).then(function (list) {
+            floorid = idIn(list, 'floorName', 'floorId', named('floor'));
+            if (!floorid) throw new Error('floor');
+            return post('/epay/h5/getroom.json',
+                {sysid: sysid, areaid: areaid, districtid: districtid, buildid: buildid, floorid: floorid}, true);
+        }).then(function (list) {
+            var roomid = idIn(list, 'roomName', 'roomId', named('room'));
+            if (!roomid) throw new Error('room');
+            target.stage = 'result';
+            open(RESULT + '?sysid=' + encodeURIComponent(sysid) + '&roomid=' + encodeURIComponent(roomid)
+                + '&areaid=' + encodeURIComponent(areaid) + '&buildid=' + encodeURIComponent(buildid) + '&retry=1');
+        }).catch(function () { target.status = 'failed'; target.reason = 'page'; });
+    }
+    /** The old selector-driven query, kept for WebViews without fetch or without saved ids. */
+    function legacy() {
+        var current = window.__xinxinElectricityPage;
+        if (current && current.status !== 'pending') return JSON.stringify(current);
+        if (!current && !field('room')) {
+            // The school may keep the queried room for the session: read the result page directly.
+            var already = balances();
+            if (already) {
+                var shownAlready = roomOnPage();
+                if (!expected || shownAlready !== expected) return JSON.stringify(fail('room'));
+                return JSON.stringify({status: 'complete', room: plan.room, balance: already, page: 'result'});
+            }
+        }
+        var target = window.__xinxinElectricityPage = {status: 'pending', stage: 'room', page: 'selection'};
+        var started = Date.now(), index = 0, stable = '', same = 0, asked = false, empty = 0;
+        function finish(status, reason) { target.status = status; target.reason = reason || ''; }
+        (function step() {
+            if (window.__xinxinElectricityPage !== target || target.status !== 'pending') return;
+            if (!trusted()) return finish('failed', 'moved');
+            if (document.querySelector('input[type=password]')) return finish('failed', 'login');
+            if (Date.now() - started > 45000) return finish('failed', 'timeout');
+            var $ = window.jQuery;
+            if ($ && $.active > 0) return setTimeout(step, 300);
+            if (!field('room')) {
+                // The school's result page (fresh document, or swapped in place after 下一步): it carries
+                // the room and a labelled balance instead of the selectors.
+                var result = balances();
+                if (result) {
+                    var shownResult = roomOnPage();
+                    if (!expected || shownResult !== expected) return finish('failed', 'room');
+                    target.room = plan.room;
+                    target.balance = result;
+                    target.page = 'result';
+                    return finish('complete');
+                }
+                if (++empty < 25) return setTimeout(step, 400);
+                return finish('failed', 'page');
+            }
+            if (index < plan.room.fields.length) {
+                var wanted = plan.room.fields[index], input = field(wanted.role);
+                if (!input || input.id !== wanted.id) return finish('failed', 'room');
+                var now = selected(wanted.role, input);
+                if (now && now.value === String(wanted.value)) { index++; return setTimeout(step, 300); }
+                try { if (String(input.tagName).toUpperCase() === 'SELECT') {
+                    var options = Array.prototype.filter.call(input.options, function (option) { return String(option.value) === String(wanted.value); });
+                    if (options.length !== 1) return setTimeout(step, 300);
+                    input.value = String(wanted.value); input.dispatchEvent(new Event('change', {bubbles: true}));
+                } else {
+                    var picker = $ && $(input).data('weui-select');
+                    if (!picker || !picker.config || typeof picker.updateInputValue !== 'function') return setTimeout(step, 300);
+                    var items = (picker.config.items || []).filter(function (item) { return String(item.value) === String(wanted.value); });
+                    if (items.length !== 1) return setTimeout(step, 300);
+                    picker.updateInputValue($([items[0].value]), [items[0].title]);
+                } } catch (error) { return finish('failed', 'selector'); }
+                return setTimeout(step, 300);
+            }
+            var selectedRoom = room();
+            if (!selectedRoom || key(selectedRoom) !== key(plan.room)) return finish('failed', 'room');
+            target.room = plan.room;
+            if (plan.action === 'restore') return finish('complete');
+            var balance = balances();
+            var signature = balance ? JSON.stringify(balance) : '';
+            same = signature && signature === stable ? same + 1 : 0; stable = signature;
+            if (same >= 2) {
+                var shownRoom = roomOnPage();
+                if (shownRoom && expected && shownRoom !== expected) return finish('failed', 'room');
+                target.balance = balance;
                 return finish('complete');
             }
-            if (++empty < 25) return setTimeout(step, 400);
-            return finish('failed', 'page');
-        }
-        if (index < plan.room.fields.length) {
-            var wanted = plan.room.fields[index], input = field(wanted.role);
-            if (!input || input.id !== wanted.id) return finish('failed', 'room');
-            var current = selected(wanted.role, input);
-            if (current && current.value === String(wanted.value)) { index++; return setTimeout(step, 300); }
-            try { if (String(input.tagName).toUpperCase() === 'SELECT') {
-                var options = Array.prototype.filter.call(input.options, function (option) { return String(option.value) === String(wanted.value); });
-                if (options.length !== 1) return setTimeout(step, 300);
-                input.value = String(wanted.value); input.dispatchEvent(new Event('change', {bubbles: true}));
-            } else {
-                var picker = $ && $(input).data('weui-select');
-                if (!picker || !picker.config || typeof picker.updateInputValue !== 'function') return setTimeout(step, 300);
-                var items = (picker.config.items || []).filter(function (item) { return String(item.value) === String(wanted.value); });
-                if (items.length !== 1) return setTimeout(step, 300);
-                picker.updateInputValue($([items[0].value]), [items[0].title]);
-            } } catch (error) { return finish('failed', 'selector'); }
-            return setTimeout(step, 300);
-        }
-        var selectedRoom = room();
-        if (!selectedRoom || key(selectedRoom) !== key(plan.room)) return finish('failed', 'room');
-        state.room = plan.room;
-        if (plan.action === 'restore') return finish('complete');
-        var balance = balances();
-        var signature = balance ? JSON.stringify(balance) : '';
-        same = signature && signature === stable ? same + 1 : 0; stable = signature;
-        if (same >= 2) {
-            var shownRoom = roomOnPage();
-            if (shownRoom && expected && shownRoom !== expected) return finish('failed', 'room');
-            state.balance = balance;
-            return finish('complete');
-        }
-        if (!balance && !asked) {
-            // Submitting the school's own 下一步 performs the read-only query; the amount and the
-            // recharge button stay untouched.
-            var button = nextStep();
-            asked = true;
-            stable = '';
-            same = 0;
-            if (button) {
-                state.stage = 'query';
-                try { button.click(); } catch (error) { return finish('failed', 'query'); }
+            if (!balance && !asked) {
+                // Submitting the school's own 下一步 performs the read-only query; the amount and the
+                // recharge button stay untouched.
+                var button = nextStep();
+                asked = true;
+                stable = ''; same = 0;
+                if (button) {
+                    target.stage = 'query';
+                    try { button.click(); } catch (error) { return finish('failed', 'query'); }
+                }
+                return setTimeout(step, 500);
             }
-            return setTimeout(step, 500);
+            setTimeout(step, 300);
+        })();
+        return JSON.stringify(target);
+    }
+    if (read) {
+        if (isResult()) {
+            if (state) return JSON.stringify(state);
+            var resultState = window.__xinxinElectricityPage = {status: 'pending', stage: 'result', page: 'result'};
+            var resultStarted = Date.now();
+            function resultFailed(reason) { resultState.status = 'failed'; resultState.reason = reason; }
+            (function waitResult() {
+                if (window.__xinxinElectricityPage !== resultState || resultState.status !== 'pending') return;
+                if (!trusted() || !isResult()) return resultFailed('moved');
+                if (document.querySelector('input[type=password]')) return resultFailed('login');
+                var found = balances();
+                if (found) {
+                    var onPage = roomOnPage();
+                    if (expected && onPage !== expected) return resultFailed('room');
+                    resultState.room = plan.room;
+                    resultState.balance = found;
+                    resultState.status = 'complete';
+                    return;
+                }
+                // Both result documents may render asynchronously after onPageFinished.
+                // Only treat saved ids as stale after giving the page time to show its balance.
+                if (Date.now() - resultStarted < 10000) return setTimeout(waitResult, 300);
+                if (/[?&]retry=1/.test(location.search) || typeof fetch !== 'function' || !canNavigate())
+                    return resultFailed('page');
+                resultState.stage = 'resolve';
+                rebuild(resultState);
+            })();
+            return JSON.stringify(resultState);
         }
-        setTimeout(step, 300);
-    })();
-    return JSON.stringify(state);
+        if (typeof fetch === 'function' && canNavigate()) {
+            var url = resultUrl();
+            if (url) {
+                var target = window.__xinxinElectricityPage = {status: 'pending', stage: 'result'};
+                setTimeout(function () { if (target.status === 'pending') open(url); }, 0);
+                return JSON.stringify(target);
+            }
+        }
+        return legacy();
+    }
+    return legacy();
 })()
