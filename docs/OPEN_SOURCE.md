@@ -25,4 +25,4 @@
 - **模型权重**：ddddocr 的 `common_old.onnx` 与字符表，MIT 许可。取自 PyPI 上的 `ddddocr==1.6.1`，只抽取 `ddddocr/common_old.onnx` 与 `ddddocr/charsets.py` 中的 `CHARSET_OLD`，权重不改动。原始 wheel 与提取过程放在忽略的 `toolchain/`，按指纹复现的脚本是 `captcha-probe/prepare_model.py`。随 APK 分发的两份制品位于 `app/src/main/assets/ocr/`，摘要记录在 [CAPTCHA-OCR.md](CAPTCHA-OCR.md)。
 - **推理运行时**：Microsoft 的 `com.microsoft.onnxruntime:onnxruntime-android:1.31.1`，MIT 许可，用于在设备本地推理。AAR 由 `tools/get-onnxruntime.ps1` 从 Maven Central 取回并校验 SHA-256，缓存在忽略的 `toolchain/onnxruntime/1.31.1/`；只有 `classes.jar` 和 `arm64-v8a` 的两个 `.so` 进入 APK。
 
-APK 内 `assets/licenses/NOTICE-CAPTCHA-OCR.txt` 保留两项的 MIT 原文、来源链接和固定摘要。模型只用于识别用户自己本次登录的验证码，在设备本地推理，不上传图片或结果；数据边界见 [PRIVACY.md](PRIVACY.md)。同样没有引入 Gradle 或 Maven 构建工具。
+APK 内 `assets/licenses/NOTICE-CAPTCHA-OCR.txt` 保留两项的 MIT 原文、来源链接和固定摘要；另随包保留 ONNX Runtime 1.31.1 上游的 `LICENSE-ONNXRUNTIME.txt` 和 `ONNXRUNTIME-THIRD-PARTY-NOTICES.txt`，分别取自固定标签 [LICENSE](https://github.com/microsoft/onnxruntime/blob/v1.31.1/LICENSE) 与 [ThirdPartyNotices.txt](https://github.com/microsoft/onnxruntime/blob/v1.31.1/ThirdPartyNotices.txt)。模型只用于识别用户自己本次登录的验证码，在设备本地推理，不上传图片或结果；数据边界见 [PRIVACY.md](PRIVACY.md)。同样没有引入 Gradle 或 Maven 构建工具。
