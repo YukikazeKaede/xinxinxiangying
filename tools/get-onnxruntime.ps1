@@ -26,27 +26,22 @@ if ((Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvar
 }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $classesPath = Join-Path $runtimeRoot 'classes.jar'
-if (-not (Test-Path -LiteralPath $classesPath)) {
-    $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
-    try {
-        $entry = $archive.GetEntry('classes.jar')
-        if (-not $entry) { throw 'ONNX Runtime AAR has no classes.jar.' }
-        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $classesPath, $true)
-    } finally { $archive.Dispose() }
-}
-foreach ($abi in $abis) {
-    $abiRoot = Join-Path $runtimeRoot $abi
-    New-Item -ItemType Directory -Path $abiRoot -Force | Out-Null
-    foreach ($library in @('libonnxruntime.so', 'libonnxruntime4j_jni.so')) {
-        $target = Join-Path $abiRoot $library
-        if (Test-Path -LiteralPath $target) { continue }
-        $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
-        try {
+# Always extract from the verified archive; cached extracted files are not trusted.
+$archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+try {
+    $entry = $archive.GetEntry('classes.jar')
+    if (-not $entry) { throw 'ONNX Runtime AAR has no classes.jar.' }
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $classesPath, $true)
+    foreach ($abi in $abis) {
+        $abiRoot = Join-Path $runtimeRoot $abi
+        New-Item -ItemType Directory -Path $abiRoot -Force | Out-Null
+        foreach ($library in @('libonnxruntime.so', 'libonnxruntime4j_jni.so')) {
+            $target = Join-Path $abiRoot $library
             $entry = $archive.GetEntry('jni/' + $abi + '/' + $library)
             if (-not $entry) { throw ('ONNX Runtime AAR has no jni/' + $abi + '/' + $library + '.') }
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
-        } finally { $archive.Dispose() }
+        }
     }
-}
+} finally { $archive.Dispose() }
 if (-not (Test-Path -LiteralPath $classesPath)) { throw 'Incomplete ONNX Runtime archive.' }
 [PSCustomObject]@{ ClassesJar = $classesPath; Root = $runtimeRoot; Abis = $abis }

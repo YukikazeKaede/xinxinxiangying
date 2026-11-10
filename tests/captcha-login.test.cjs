@@ -199,6 +199,37 @@ test('captcha fill refuses hostile hosts, insecure pages and junk text', () => {
   }
 });
 
+test('captcha fill rechecks the target form before touching a value or submitting', () => {
+  for (const action of ['https://evil.example/login', 'https://jwxt.sit.edu.cn/login', 'http://authserver.sit.edu.cn/login', 'https://user:pass@authserver.sit.edu.cn/login']) {
+    const input = visibleCaptcha();
+    const f = fixture({ action, inputs: [input] });
+    assert.equal(runCaptcha(f, 'a1B2'), 'blocked', action);
+    assert.equal(input.value, '');
+    assert.equal(f.submitted(), 0);
+  }
+});
+
+test('a delayed OCR result never overwrites user input or submits twice', () => {
+  const input = visibleCaptcha('USER');
+  const f = fixture({ inputs: [input] });
+  assert.equal(runCaptcha(f, 'a1B2'), 'user-input');
+  assert.equal(input.value, 'USER');
+  assert.equal(f.submitted(), 0);
+  input.value = '';
+  assert.equal(runCaptcha(f, 'a1B2'), 'submitted');
+  assert.equal(runCaptcha(f, 'c3D4'), 'submitted');
+  assert.equal(input.value, 'a1B2');
+  assert.equal(f.submitted(), 1);
+});
+
+test('captcha fill ignores a hidden template after the visible challenge disappears', () => {
+  const input = hiddenCaptcha();
+  const f = fixture({ inputs: [input] });
+  assert.equal(runCaptcha(f, 'a1B2'), 'not-login');
+  assert.equal(input.value, '');
+  assert.equal(f.submitted(), 0);
+});
+
 test('captcha fill does nothing when the school page has no captcha field', () => {
   const f = fixture({ inputs: [] });
   assert.equal(runCaptcha(f, 'a1B2'), 'not-login');
