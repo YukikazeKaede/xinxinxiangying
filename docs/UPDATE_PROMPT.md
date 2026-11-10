@@ -22,7 +22,7 @@
 ## 一、项目事实
 
 - 包名 cn.xinxinxiangying.app；minSdk 24，targetSdk 36；javac 用 -source 8 -target 8。
-- 原生 Java + 内嵌 assets JS，没有第三方运行时依赖；不用 Gradle，构建脚本是 build.ps1（aapt2 compile/link → javac → d8 → 对齐 → apksigner 签名校验）。
+- 原生 Java + 内嵌 assets JS。第三方运行时依赖只有白名单里的两个：支付宝官方 `com.alipay.sdk:alipaysdk-android:15.8.42`（校园卡 H5 转原生支付，缓存在 `toolchain/alipay/`，不入库）与 `com.microsoft.onnxruntime:onnxruntime-android:1.31.1`（端侧验证码识别，缓存在 `toolchain/onnxruntime/`，不入库）。随包资产另含 `app/src/main/assets/ocr/`：验证码模型 `captcha.onnx`、字符表 `charset.json`、12 张自检样本 `selftest/`，**属于必须入库的运行时资产**。不用 Gradle，构建脚本是 build.ps1（aapt2 compile/link → javac → d8 → 对齐 → apksigner 签名校验）。
 - 版本号唯一来源：app/src/main/AndroidManifest.xml 的 android:versionCode / android:versionName。
 - 本地产物：dist/心心相应-<versionName>.apk；发布资产名固定 xinxin_<versionName>.apk。
 - 应用内更新清单地址：https://github.com/YukikazeKaede/xinxinxiangying/releases/latest/download/update.json
@@ -31,9 +31,18 @@
 
 ## 二、硬性约束（违反即返工）
 
-1. 不新增第三方依赖，不引入 Gradle / Maven，不把外部库复制进仓库。
+1. 依赖**默认禁止**，只有下面这份已评审白名单可以引入，白名单之外一律不引入，也不引入 Gradle / Maven：
+   - `com.alipay.sdk:alipaysdk-android:15.8.42` —— 校园卡 H5 转原生支付及返回回调，SHA-256 `a6c301708b59a3a7cda843cf02e7b3b0b44afd96819f0a18890322e9868abf28`；
+   - `com.microsoft.onnxruntime:onnxruntime-android:1.31.1` —— 端侧验证码识别，SHA-256 `d4d50660300ed2c4f38ffdfd5ab5bfa3a22f995f282dda24f42ea3ea55467b49`；
+   - 随包模型 `app/src/main/assets/ocr/` —— ddddocr `common_old.onnx`（13,606,051 B，SHA-256 `b8f2ad9cbc1f2e3922a6cb9459e30824e7e2467f3fb4fd61420640e34ea0bf68`）、`charset.json`（57,249 B，SHA-256 `342d871c34fd467420cd39b58a4624b505da53114e77a69b43b48b8a3ee1b24d`）、`selftest/`（12 张合成样本 + `expected.tsv`）。
+   白名单准入条件（新条目缺一不可，评审时逐条核对）：
+   - 版本与 SHA-256 写死在 `tools/get-*.ps1`，构建时校验，**不追随 latest**；
+   - 许可证与仓库许可兼容，APK 内 `app/src/main/assets/licenses/` 保留原文、来源与固定摘要；
+   - 不新增 Android 权限、不新增对外网络请求，处理的数据边界写进 `docs/PRIVACY.md`；
+   - 体积变化写进 `docs/BUILD.md`（来源坐标、固定摘要、提取哪些文件、APK 增量）；
+   - 二进制是放忽略的 `toolchain/` 还是入库，在条目里写明理由。
 2. PowerShell 脚本保持纯 ASCII 源码（Windows PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI）；需要中文文件名时用 Unicode 码点拼接，不要直接写中文。
-3. 不提交 _private/、toolchain/、build/、dist/、*.apk、*.p12、update.json 这类被 .gitignore 覆盖的内容；提交前用 git status 核对。
+3. 不提交 _private/、toolchain/、build/、dist/、*.apk、*.p12、update.json 这类被 .gitignore 覆盖的内容；提交前用 git status 核对。例外：`app/src/main/assets/ocr/`（验证码模型、字符表、自检样本）是白名单内的运行时资产，**必须入库**，不能因为它是二进制就排除。
 4. 不得出现真实学号、姓名、成绩、课表、Cookie、密码、抓包、学校页面快照、个人截图；测试只用合成数据（SYNTHETIC_*）。
 5. 不改签名配置、不改包名、不改 update_manifest_url，除非本次需求明确要求。
 6. 不做与需求无关的重构、改名、批量格式化、依赖升级；diff 尽量控制在 400 行内，超出要先说明理由。
@@ -110,6 +119,8 @@ fix(update): 下载完成后先校验 SHA-256 再交给安装器
 - 验证是我真的跑过，还是只是推测？
 - 版本号和文档改动符合触发条件吗？
 - 有没有新增权限、依赖或对外网络请求？
+- 新依赖在白名单内吗？版本与 SHA-256 有没有写死在 `tools/get-*.ps1` 里？
+- 文档里的指纹（sha256 / 字节数）与 `app/src/main/assets/ocr/` 下的实际文件对得上吗？
 ```
 
 ## 填写示例

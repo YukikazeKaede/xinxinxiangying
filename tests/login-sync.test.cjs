@@ -13,7 +13,10 @@ function fixture(host = 'authserver.sit.edu.cn', action = '/authserver/login') {
   const form = {action, querySelector() { return button; }};
   const user = new Input(), password = new Input(); user.form = password.form = form;
   const challenge = new Input(); challenge.offsetWidth = 0; challenge.offsetHeight = 0; challenge.getClientRects = () => [];
-  const doc = {querySelector(selector) { if (selector.includes('#username')) return user; if (selector.includes('#password')) return password; if (selector.includes('#captchaResponse')) return challenge; return null; }};
+  const doc = {querySelector(selector) { if (selector.includes('#username')) return user; if (selector.includes('#password')) return password; if (selector.includes('#captchaResponse')) return challenge; return null; },
+    // school-login.js 用 querySelectorAll 挑第一个可见元素（页面上验证码存在可见/隐藏两份），
+    // 这里的替身返回同一批元素即可；没有验证码图片，取图会返回空串。
+    querySelectorAll(selector) { if (selector.includes('#username')) return [user]; if (selector.includes('#password')) return [password]; if (selector.includes('#captchaResponse')) return [challenge]; return []; }};
   const ctx = {location: {protocol: 'https:', hostname: host, origin: 'https://' + host, href: 'https://' + host + '/authserver/login'}, document: doc, window: {}, URL, HTMLInputElement: Input, Event: class { constructor(type) { this.type = type; } }};
   return {ctx, form, user, password, challenge, submitted: () => submitted};
 }

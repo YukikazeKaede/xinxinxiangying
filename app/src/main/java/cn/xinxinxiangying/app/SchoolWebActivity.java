@@ -63,6 +63,21 @@ public final class SchoolWebActivity extends Activity {
     private String academicXnm="";
     private String academicXqm="";
     private String lastAcademicState="";
+    // 验证码：本机识别与放大输入兜底。两个开关都在 SharedPreferences 里，默认开启；
+    // 关闭时这条路径不创建 solver、不改任何既有状态，行为与 0.7.6 一致。
+    private static final int CAPTCHA_ATTEMPTS=2;
+    // 验证码图在页面 ready 之后才异步加载：等约 2 秒再判失败。
+    private static final int CAPTCHA_IMAGE_RETRIES=8;
+    private static final long CAPTCHA_IMAGE_DELAY=250L;
+    private CaptchaSolver captchaSolver;
+    private boolean captchaSolverFailed;
+    private boolean captchaSelfTest;
+    private final java.util.concurrent.ExecutorService captchaWorker=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private volatile boolean captchaDestroyed;
+    private int captchaBusyVersion=-1;
+    private int autoCaptchaAttempts;
+    private String captchaImage="";
+    private String captchaScript="";
     private void log(String message){ if(!debuggable) return; android.util.Log.i("xinxinsync",message); }
     private Button importButton;
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density*v+.5f); }
@@ -96,6 +111,7 @@ public final class SchoolWebActivity extends Activity {
         getIntent().removeExtra("password");
         // 手动浏览学校服务时也可能落到统一认证页，记住密码的用户可以只补验证码。
         loginScript=readAsset("school-login.js");
+        captchaScript=readAsset("school-captcha.js");
         if(autoSync){navigationScript=readAsset("timetable-navigate.js");sessionScript=readAsset("school-session.js");}
         if(academicService!=null)academicScript=assetOrNull("academic-api.js");
         if(syncAll)academicScript=assetOrNull("academic-api.js");
@@ -122,7 +138,7 @@ public final class SchoolWebActivity extends Activity {
             if(autoSync)importButton.setVisibility(View.GONE);
         }
         LinearLayout more=new LinearLayout(this);more.setGravity(android.view.Gravity.CENTER);more.setBackground(CampusUi.ripple(this,android.graphics.Color.WHITE,6));more.addView(new CampusUi.Icon(this,"more",CampusUi.GREEN),new LinearLayout.LayoutParams(dp(22),dp(22)));more.setContentDescription("更多");more.setFocusable(true);more.setOnClickListener(v->showMenu());bar.addView(more,new LinearLayout.LayoutParams(dp(44),dp(44)));root.addView(bar);
-        if(autoSync)more.setVisibility(View.GONE);
+        if(autoSync)more.setOnClickListener(v->showCaptchaSettings());
         status=CampusUi.text(this,"正在验证学校账号…",11,CampusUi.MUTED);status.setPadding(dp(20),dp(2),dp(20),dp(10));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);if(!autoSync)root.addView(status);
         if(SchoolCatalog.isAcademic(service)&&!autoSync){
             LinearLayout guide=CampusUi.column(this);guide.setPadding(dp(15),dp(12),dp(15),dp(12));guide.setBackground(CampusUi.shape(this,CampusUi.SOFT,8));
@@ -171,6 +187,7 @@ public final class SchoolWebActivity extends Activity {
                 if(electricityRoomRestored)view.setEnabled(true);
                 paymentReady=false;cardExpired=false;stopCardWatch();
                 navigationFailed=false;pageVersion++;
+                captchaBusyVersion=-1;captchaImage="";
                 if(!SessionPolicy.isAuthHost(Uri.parse(url).getHost()))manualLoginSubmitted=false;
                 log("start "+pageVersion+" "+safeUrl(url));
                 boolean allowed=isAllowedMainUrl(url);
@@ -404,6 +421,229 @@ public final class SchoolWebActivity extends Activity {
         autoStopped=true;waitingForUser=true;autoHandler.removeCallbacksAndMessages(null);
         revealSchool();resetImportButton();status.setText(message);
     }
+    /** 验证码辅助开关；默认开启，可在学校页面「更多 → 验证码辅助」关闭。 */
+    private boolean captchaAuto(){return getSharedPreferences("school_profile",0).getBoolean("autoCaptcha",true);}
+    private boolean captchaEnlarged(){return getSharedPreferences("school_profile",0).getBoolean("captchaDialog",true);}
+    /** 自动同步时状态栏是隐藏的，识别结果只能靠 Toast 让用户看见，也方便现场排查。 */
+    private void captchaToast(String message){if(captchaAuto()||captchaEnlarged())Toast.makeText(this,message,Toast.LENGTH_SHORT).show();}
+    /**
+     * 两处 challenge 的唯一入口。
+     *
+     * <p>熔断规则：识别结果不可用（长度≠4、含非 [0-9A-Za-z]、置信度低）时<b>不提交</b>，
+     * 直接落回人工；自动尝试最多 {@link #CAPTCHA_ATTEMPTS} 次，此后不再猜。
+     * 学校的失败计数由登录接口维护，所以这里宁可不猜也不循环。
+     */
+    private void handleChallenge(boolean automatic){
+        if(!isCaptchaPage(pageVersion)||captchaBusyVersion==pageVersion)return;
+        if(!captchaAuto()&&!captchaEnlarged()){
+            if(automatic){autoLoginAttempts++;waitForUser("请完成学校验证码，完成后会自动继续");}
+            else status.setText("请完成学校验证码，完成后会回到当前服务");
+            return;
+        }
+        status.setText(captchaAuto()&&autoCaptchaAttempts<CAPTCHA_ATTEMPTS?"正在本机识别验证码…":"请填写验证码");
+        captchaBusyVersion=pageVersion;
+        readCaptchaImage(automatic,pageVersion,0);
+    }
+    private boolean isCaptchaPage(int version){
+        return !captchaDestroyed&&web!=null&&!isFinishing()&&!navigationFailed
+            &&version==pageVersion&&isCurrentSession()&&SessionPolicy.isLoginUrl(web.getUrl());
+    }
+    /**
+     * 学校那张验证码图在 document.ready 之后才异步加载，第一次读窗口变量经常还是空的。
+     * 之前一次取空就直接转人工、而转人工会把自动流程停掉，于是看起来「完全不会自动填」。
+     * 这里等最多约 2 秒（{@link #CAPTCHA_IMAGE_RETRIES} × {@link #CAPTCHA_IMAGE_DELAY}），
+     * JS 侧在图片 load 完成后会把数据写进同一个窗口变量。
+     */
+    private void readCaptchaImage(boolean automatic,int version,int attempt){
+        if(!isCaptchaPage(version))return;
+        web.evaluateJavascript("window.__xinxinCaptchaImage||''",value->{
+            if(!isCaptchaPage(version))return;
+            captchaImage=unquote(value);
+            if(captchaImage.isEmpty()){
+                if(attempt<CAPTCHA_IMAGE_RETRIES){
+                    autoHandler.postDelayed(()->readCaptchaImage(automatic,version,attempt+1),CAPTCHA_IMAGE_DELAY);
+                    return;
+                }
+                log("captcha-image-empty");
+                captchaToast("没能读取学校验证码图片，请手动输入");
+                if(captchaEnlarged())showCaptchaDialog(automatic);else fallbackChallenge(automatic,true);
+                return;
+            }
+            if(captchaAuto()&&autoCaptchaAttempts<CAPTCHA_ATTEMPTS&&recognizeCaptcha(automatic,version))return;
+            if(captchaEnlarged())showCaptchaDialog(automatic);else fallbackChallenge(automatic,true);
+        });
+    }
+    /** @param silent true 时不提示，用于「本来就已经交给用户」的收尾。 */
+    private void fallbackChallenge(boolean automatic,boolean silent){
+        captchaBusyVersion=-1;
+        if(!silent)captchaToast("请手动输入学校验证码");
+        if(automatic){autoLoginAttempts++;waitForUser("请完成学校验证码，完成后会自动继续");}
+        else{
+            // 手动浏览路径只注入一次，转人工后允许下一个页面周期再试一次。
+            manualLoginSubmitted=false;
+            status.setText("请完成学校验证码，完成后会回到当前服务");
+        }
+    }
+    /**
+     * 在工作线程里载入模型并推理：13 MB 模型首次落盘 + 单张推理不能压在主线程上。
+     * 返回 true 表示已经接管流程，调用方不要再落回人工。
+     */
+    private boolean recognizeCaptcha(boolean automatic,int version){
+        final byte[] image=decodeCaptchaImage(captchaImage);
+        if(image==null)return false;
+        captchaWorker.execute(()->{
+            String solved=null;
+            String failure="";
+            try{
+                if(captchaSolver==null&&!captchaSolverFailed){
+                    // Throwable 而不是 Exception：缺 .so 之类是 LinkageError，
+                    // 后台线程上漏出去会把整个进程带崩，这里一律降级成人工输入。
+                    try{captchaSolver=CaptchaSolver.load(this);}
+                    catch(Throwable e){captchaSolverFailed=true;failure="模型载入失败 "+e.getClass().getSimpleName();log("captcha-load-failed "+e.getClass().getSimpleName());}
+                }
+                if(captchaSolver!=null){
+                    CaptchaSolver.Result result=captchaSolver.inspect(image);
+                    if(result!=null&&result.usable)solved=result.text;
+                    else failure=result==null?"图片解码失败":"识别结果不可用";
+                    log("captcha "+(result!=null&&result.usable?"usable":"dropped"));
+                }
+            }catch(Throwable e){failure="识别异常 "+e.getClass().getSimpleName();log("captcha-error "+e.getClass().getSimpleName());}
+            final String text=solved;
+            final String reason=failure;
+            runOnUiThread(()->{
+                if(!isCaptchaPage(version))return;
+                if(text==null){
+                    log("captcha-fallback "+reason);
+                    captchaToast(reason.isEmpty()?"验证码识别失败，请手动输入":"验证码识别失败（"+reason+"），请手动输入");
+                    if(captchaEnlarged())showCaptchaDialog(automatic);else fallbackChallenge(automatic,true);
+                    return;
+                }
+                fillCaptcha(text,automatic,version);
+            });
+        });
+        return true;
+    }
+    /** 第二次注入：走 set() + input/change 路径填入并点一次学校自己的提交按钮。 */
+    private void fillCaptcha(String text,boolean automatic,int version){
+        if(!isCaptchaPage(version))return;
+        autoCaptchaAttempts++;
+        if(captchaScript.isEmpty()){fallbackChallenge(automatic,false);return;}
+        web.evaluateJavascript(captchaScript.replace("__CAPTCHA_TEXT__",org.json.JSONObject.quote(text)),result->{
+            if(!isCaptchaPage(version))return;
+            captchaBusyVersion=-1;
+            String state=unquote(result);
+            log("captcha-fill "+state);
+            if("submitted".equals(state)){
+                status.setText("已自动填写验证码，正在提交…");
+                captchaToast("已填写验证码并提交");
+                if(automatic)scheduleAuto(version);
+                return;
+            }
+            captchaToast("验证码没能填进学校页面（"+state+"），请手动输入");
+            fallbackChallenge(automatic,true);
+        });
+    }
+    private byte[] decodeCaptchaImage(String dataUrl){
+        try{
+            int comma=dataUrl.indexOf(',');
+            if(comma<0||!dataUrl.startsWith("data:image/"))return null;
+            return android.util.Base64.decode(dataUrl.substring(comma+1),android.util.Base64.DEFAULT);
+        }catch(IllegalArgumentException e){return null;}
+    }
+    /** 兜底：把验证码放大 3 倍在本机输入框里填，不依赖 OCR，也不需要联网。 */
+    private void showCaptchaDialog(boolean automatic){
+        if(!isCaptchaPage(pageVersion))return;
+        byte[] bytes=decodeCaptchaImage(captchaImage);
+        android.graphics.Bitmap bitmap=bytes==null?null:android.graphics.BitmapFactory.decodeByteArray(bytes,0,bytes.length);
+        if(bitmap==null){fallbackChallenge(automatic,false);return;}
+        final int version=pageVersion;
+        LinearLayout column=new LinearLayout(this);column.setOrientation(LinearLayout.VERTICAL);column.setPadding(dp(20),dp(10),dp(20),dp(2));
+        ImageView preview=new ImageView(this);
+        preview.setImageBitmap(android.graphics.Bitmap.createScaledBitmap(bitmap,bitmap.getWidth()*3,bitmap.getHeight()*3,false));
+        preview.setAdjustViewBounds(true);preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        preview.setContentDescription("学校验证码");column.addView(preview);
+        final EditText input=new EditText(this);
+        input.setHint("输入验证码");input.setSingleLine(true);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(8)});
+        column.addView(input);
+        new AlertDialog.Builder(this).setTitle("输入验证码").setView(column)
+            .setOnCancelListener(d->{if(isCaptchaPage(version))fallbackChallenge(automatic,false);})
+            .setNegativeButton("取消",(d,w)->{if(isCaptchaPage(version))fallbackChallenge(automatic,false);})
+            .setPositiveButton("提交",(d,w)->{
+                String text=input.getText().toString().trim();
+                if(!isCaptchaPage(version))return;
+                if(!text.matches("[0-9A-Za-z]{1,8}")){fallbackChallenge(automatic,false);return;}
+                fillCaptcha(text,automatic,version);
+            }).show();
+    }
+    private void showCaptchaSettings(){
+        LinearLayout column=new LinearLayout(this);column.setOrientation(LinearLayout.VERTICAL);column.setPadding(dp(20),dp(8),dp(20),dp(4));
+        final CheckBox automatic=new CheckBox(this);
+        automatic.setText("本机识别验证码（离线）");automatic.setChecked(captchaAuto());
+        final CheckBox enlarge=new CheckBox(this);
+        enlarge.setText("验证码放大输入");enlarge.setChecked(captchaEnlarged());
+        TextView note=CampusUi.text(this,"开启识别后，遇到验证码先用本机模型填一次并提交；识别不合法或连续 2 次失败就回到手动输入，不会反复猜。识别与放大都在本机完成，不新增任何网络请求。",11,CampusUi.MUTED);
+        note.setLineSpacing(dp(2),1);note.setPadding(0,dp(6),0,0);
+        column.addView(automatic);column.addView(enlarge);column.addView(note);
+        new AlertDialog.Builder(this).setTitle("验证码辅助").setView(column).setNegativeButton("取消",null)
+            .setNeutralButton("本机自检",(d,w)->runCaptchaSelfTest())
+            .setPositiveButton("保存",(d,w)->{
+                getSharedPreferences("school_profile",0).edit()
+                    .putBoolean("autoCaptcha",automatic.isChecked())
+                    .putBoolean("captchaDialog",enlarge.isChecked()).apply();
+                status.setText("验证码设置已保存，下次遇到验证码生效");
+            }).show();
+    }
+    private byte[] assetBytes(String name){
+        try(java.io.InputStream in=getAssets().open(name)){
+            java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream(Math.max(1024,in.available()));
+            byte[] chunk=new byte[8192];int read;
+            while((read=in.read(chunk))!=-1)out.write(chunk,0,read);
+            return out.toByteArray();
+        }catch(Exception e){return null;}
+    }
+    /**
+     * 用随包的合成样本在设备上跑一遍完整流水线。
+     * 这是方案 §7 V1 的自助版：不需要 adb，也不用真人验证码就能判断
+     * 「模型和预处理在这台机器上到底能不能用」。
+     */
+    private void runCaptchaSelfTest(){
+        if(captchaSelfTest)return;
+        captchaSelfTest=true;
+        Toast.makeText(this,"正在自检验证码识别…",Toast.LENGTH_SHORT).show();
+        captchaWorker.execute(()->{
+            int total=0,passed=0;String firstFailure="",reason="";
+            try{
+                String list=readAsset("ocr/selftest/expected.tsv");
+                if(list.isEmpty())reason="找不到自检样本";
+                CaptchaSolver solver=captchaSolver;
+                if(solver==null&&reason.isEmpty()){
+                    solver=CaptchaSolver.load(this);
+                    captchaSolver=solver;
+                }
+                for(String line:list.split("\n")){
+                    String row=line.trim();
+                    if(row.isEmpty())continue;
+                    String[] parts=row.split("\t");
+                    if(parts.length<2)continue;
+                    total++;
+                    byte[] png=assetBytes("ocr/selftest/"+parts[0]);
+                    CaptchaSolver.Result result=png==null?null:solver.inspect(png);
+                    if(result!=null&&result.usable&&result.text.equalsIgnoreCase(parts[1]))passed++;
+                    else if(firstFailure.isEmpty())firstFailure=parts[0]+" 期望 "+parts[1]+" 实际 "+(result==null?"解码失败":result.text+" @"+String.format(Locale.ROOT,"%.2f",result.confidence));
+                }
+            }catch(Throwable e){reason="异常 "+e.getClass().getSimpleName();}
+            final int ok=passed,all=total;final String failed=firstFailure;final String extra=reason;
+            runOnUiThread(()->{
+                captchaSelfTest=false;
+                if(captchaDestroyed||isFinishing())return;
+                String message=all==0?"自检失败："+(extra.isEmpty()?"没有可用的自检样本":extra)
+                    :ok==all?"验证码自检通过 "+ok+"/"+all+" · 本机识别可用"+("".equals(extra)?"":"（"+extra+"）")
+                    :"验证码自检 "+ok+"/"+all+" · 首例失败："+failed+("".equals(extra)?"":"（"+extra+"）");
+                Toast.makeText(this,message,Toast.LENGTH_LONG).show();
+            });
+        });
+    }
     private void observeLoginError(){
         final int version=pageVersion;
         web.evaluateJavascript(loginScript.replace("__CREDENTIALS__","{}"),result->{
@@ -433,7 +673,7 @@ public final class SchoolWebActivity extends Activity {
             web.evaluateJavascript(loginScript.replace("__CREDENTIALS__",credentials.toString()),result->{
                 if(web==null||isFinishing()||version!=pageVersion||!isCurrentSession())return;
                 String state=unquote(result);
-                if("challenge".equals(state))status.setText("请完成学校验证码，完成后会回到当前服务");
+                if("challenge".equals(state))handleChallenge(false);
                 else if("rejected".equals(state)){
                     new SchoolAccount(this).forget(postgraduate);
                     status.setText("保存的密码未通过，请在学校页面重新输入");
@@ -552,7 +792,7 @@ public final class SchoolWebActivity extends Activity {
                 return;
             }
             if("submitted".equals(state)){if(autoLoginAttempts==0)autoLoginAttempts++;status.setText("正在验证学校账号…");if(loginPolls>8){revealSchool();status.setText("请完成学校验证码或登录提示，提交后将继续同步");}scheduleAuto(version);return;}
-            if("challenge".equals(state)){autoLoginAttempts++;waitForUser("请完成学校验证码，完成后会自动继续");return;}
+            if("challenge".equals(state)){handleChallenge(true);return;}
             if("needs-login".equals(state)){pendingPassword="";waitForUser("请在学校页面完成登录或验证码，完成后会自动继续");return;}
             if("blocked".equals(state)||"unsupported".equals(state)){
                 if(authenticationAccepted)stopAutomatic("当前学校登录表单暂不支持自动验证，请稍后重试");
@@ -1028,6 +1268,10 @@ public final class SchoolWebActivity extends Activity {
             else{web.stopLoading();web.setWebChromeClient(null);web.setWebViewClient(new WebViewClient());web.destroy();}
             web=null;
         }
+        // 载入、推理、自检与关闭依次执行，避免退出时关闭仍在运行的原生会话。
+        captchaDestroyed=true;
+        captchaWorker.execute(()->{if(captchaSolver!=null){captchaSolver.close();captchaSolver=null;}});
+        captchaWorker.shutdown();
         super.onDestroy();
     }
 }

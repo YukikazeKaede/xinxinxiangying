@@ -31,7 +31,7 @@
 ## 1. 目录与真相来源
 
 - 公开仓库 `https://github.com/YukikazeKaede/xinxinxiangying` 是唯一代码主线，默认分支 `main`。
-- 构建所需的 `toolchain/`（JDK、Android SDK）和签名材料 `_private/` 只存在于各人本机，被 `.gitignore` 忽略，永不提交；成员自己按 `docs/BUILD.md` 准备。
+- 构建所需的 `toolchain/`（JDK、Android SDK、白名单依赖的 AAR）和签名材料 `_private/` 只存在于各人本机，被 `.gitignore` 忽略，永不提交；成员自己按 `docs/BUILD.md` 准备。`app/src/main/assets/ocr/` 例外，它是随包运行时资产，必须入库。
 - 不要在本地维护两份源码。日常开发就在 clone 出来的仓库里做，把 `toolchain/` 放进 clone 根目录即可构建。
 
 ### 1.1 贡献许可与商业再许可
@@ -163,7 +163,8 @@ git diff --cached --stat
 另外：
 
 - 不 force push `main`，不改写已推送历史，不删他人的 tag 或 Release。
-- 不新增第三方依赖，不引入 Gradle；构建链路保持 `build.ps1`。
+- 不新增白名单之外的第三方依赖，不引入 Gradle；构建链路保持 `build.ps1`。当前白名单（支付宝 SDK 15.8.42、ONNX Runtime 1.31.1、随包验证码模型与字符表）及准入条件见 [`docs/UPDATE_PROMPT.md`](docs/UPDATE_PROMPT.md) 硬性约束 1；新增条目必须写死版本与 SHA-256、保留 NOTICE、不新增权限与网络请求、体积变化写进 `docs/BUILD.md`。
+- `app/src/main/assets/ocr/`（验证码模型、字符表、自检样本）是白名单内的运行时资产，**必须入库**，不受“不复制外部库进仓库”的限制。
 - PowerShell 脚本保持纯 ASCII 源码，中文文件名用码点拼接。
 - 涉及新增权限、改动登录或更新链路时，先在 Issue 或 PR 里说明方案再动手。
 
