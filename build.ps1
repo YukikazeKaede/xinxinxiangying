@@ -90,6 +90,9 @@ foreach ($required in @($androidJar, (Join-Path $tools 'aapt2.exe'), (Join-Path 
     if (-not (Test-Path -LiteralPath $required)) { throw "Required Android tool missing: $required" }
 }
 $alipaySdk = & (Join-Path $project 'tools/get-alipay-sdk.ps1') -ProjectRoot $project
+# Second approved exception: a pinned on-device inference runtime for the captcha model.
+# Binaries only; no Gradle or Maven tooling. Keep this file pure ASCII (see CONTRIBUTING).
+$onnxRuntime = & (Join-Path $project 'tools/get-onnxruntime.ps1') -ProjectRoot $project
 $classes = Join-Path $build 'classes'
 $dex = Join-Path $build 'dex'
 $generated = Join-Path $build 'generated'
@@ -138,14 +141,24 @@ $sourceList = Join-Path $build 'sources.txt'
 $sourceLines = $sources | ForEach-Object { '"' + $_.FullName.Replace('\', '/') + '"' }
 [IO.File]::WriteAllLines($sourceList, [string[]]$sourceLines, [Text.UTF8Encoding]::new($false))
 $javaBootClasspath = $androidJar + [IO.Path]::PathSeparator + (Join-Path $tools 'core-lambda-stubs.jar')
-Invoke-Checked (Join-Path $JavaHome 'bin/javac.exe') @('-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', $javaBootClasspath, '-cp', $alipaySdk.ClassesJar, '-d', $classes, ('@' + $sourceList))
+Invoke-Checked (Join-Path $JavaHome 'bin/javac.exe') @('-encoding', 'UTF-8', '-source', '8', '-target', '8', '-bootclasspath', $javaBootClasspath, '-cp', ($alipaySdk.ClassesJar + [IO.Path]::PathSeparator + $onnxRuntime.ClassesJar), '-d', $classes, ('@' + $sourceList))
 $classFiles = @(Get-ChildItem -LiteralPath $classes -Filter '*.class' -Recurse -File | ForEach-Object { $_.FullName })
-Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') (@('-cp', (Join-Path $tools 'lib/d8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '24', '--lib', $androidJar, '--output', $dex) + $classFiles + @($alipaySdk.ClassesJar))
+Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') (@('-cp', (Join-Path $tools 'lib/d8.jar'), 'com.android.tools.r8.D8', '--release', '--min-api', '24', '--lib', $androidJar, '--output', $dex) + $classFiles + @($alipaySdk.ClassesJar, $onnxRuntime.ClassesJar))
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [IO.Compression.ZipFile]::Open($unsigned, [IO.Compression.ZipArchiveMode]::Update)
 try {
     foreach ($file in Get-ChildItem -LiteralPath $dex -Filter '*.dex' -File) {
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $file.Name, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+    # aapt2 does not package native libraries, so they are injected here and then
+    # aligned by Write-AlignedZip below. Injecting after alignment would break
+    # the 4-byte rule that zipalign -c 4 checks.
+    foreach ($abi in $onnxRuntime.Abis) {
+        foreach ($library in @('libonnxruntime.so', 'libonnxruntime4j_jni.so')) {
+            $libraryPath = Join-Path (Join-Path $onnxRuntime.Root $abi) $library
+            if (-not (Test-Path -LiteralPath $libraryPath)) { throw "Missing native library: $libraryPath" }
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $libraryPath, ('lib/' + $abi + '/' + $library), [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
     }
 } finally { $archive.Dispose() }
 Write-AlignedZip $unsigned $aligned

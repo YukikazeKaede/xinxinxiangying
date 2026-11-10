@@ -22,8 +22,46 @@
     input.dispatchEvent(new Event('change', {bubbles: true}));
   }
   set(user, credentials.username); set(password, credentials.password);
-  var challenge = document.querySelector('#captchaResponse,#yzm,input[name="captchaResponse"],input[name="yzm"]');
-  if (visible(challenge) && !challenge.value) return 'challenge';
+  // 验证码图片交给原生侧做本机识别：这里只取像素，不识别、不外发。
+  // 用 window 变量回传而不是改返回值，老的调用方和状态机完全不用动。
+  window.__xinxinCaptchaImage = '';
+  // 学校页把验证码模板放在 #hidenCaptchaDiv 里，再由 document.ready 拷进 #cpatchaDiv，
+  // 于是同一个 id 会出现两份（一份可见、一份 display:none）。只认可见的那个，
+  // 否则会填进隐藏模板，看起来就是“填了但没生效”。
+  function pick(list) {
+    for (var i = 0; list && i < list.length; i++) if (visible(list[i])) return list[i];
+    return list && list.length ? list[0] : null;
+  }
+  function draw(picture) {
+    var canvas = document.createElement('canvas');
+    canvas.width = picture.naturalWidth;
+    canvas.height = picture.naturalHeight;
+    canvas.getContext('2d').drawImage(picture, 0, 0);
+    // 跨域图片会污染 canvas，这里抛错由调用方兜住，退回人工输入。
+    return canvas.toDataURL('image/png');
+  }
+  function captchaImage(picture) {
+    try {
+      if (!picture) return '';
+      // ready 之后图片才异步加载，第一次评估时通常还没画出来：
+      // 挂一次性 load 回调，等它真的加载完再把图放进去，原生侧会重读。
+      if (!picture.complete || !picture.naturalWidth) {
+        if (!picture.__xinxinLoadHook) {
+          picture.__xinxinLoadHook = 1;
+          picture.addEventListener('load', function () {
+            try { window.__xinxinCaptchaImage = draw(picture); } catch (_) { window.__xinxinCaptchaImage = ''; }
+          });
+        }
+        return '';
+      }
+      return draw(picture);
+    } catch (_) { return ''; }
+  }
+  var challenge = pick(document.querySelectorAll('#captchaResponse,#yzm,input[name="captchaResponse"],input[name="yzm"]'));
+  if (visible(challenge) && !challenge.value) {
+    window.__xinxinCaptchaImage = captchaImage(pick(document.querySelectorAll('#captchaImg,img#captcha,img[src*="captcha" i],input[name="captchaResponse"] + img')));
+    return 'challenge';
+  }
   if (credentials.submit === false) return 'needs-login';
   // The school's real button runs its own salt/encryption/validation handlers.
   // Never use form.submit(), which would bypass those handlers.

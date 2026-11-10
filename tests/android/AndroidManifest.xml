@@ -15,4 +15,5 @@
     <instrumentation android:name=".DektRecordsInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".ToolsGridInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
     <instrumentation android:name=".ElectricityInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
+    <instrumentation android:name=".CaptchaSolverInstrumentation" android:targetPackage="cn.xinxinxiangying.app" />
 </manifest>

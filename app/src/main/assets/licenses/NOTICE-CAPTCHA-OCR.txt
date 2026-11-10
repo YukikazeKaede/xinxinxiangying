@@ -1,0 +1,55 @@
+Xinxinxiangying - third-party notices for the on-device captcha model
+=====================================================================
+
+This file covers the two third-party components that the optional on-device
+captcha recognition uses. It does not change the licensing of the application
+itself; see LICENSE, licenses/NOTICE and docs/LICENSING.md.
+
+1. ddddocr model weights (assets/ocr/captcha.onnx, assets/ocr/charset.json)
+--------------------------------------------------------------------------
+Source project: https://github.com/sml2h3/ddddocr
+License: MIT
+Pinned artifact: ddddocr 1.6.1, file ddddocr/common_old.onnx
+  13,606,051 bytes, SHA-256 b8f2ad9cbc1f2e3922a6cb9459e30824e7e2467f3fb4fd61420640e34ea0bf68
+  charset 8,210 entries, 57,249 bytes,
+  SHA-256 342d871c34fd467420cd39b58a4624b505da53114e77a69b43b48b8a3ee1b24d
+The weights are redistributed unmodified. They are only used for inference on
+the user's own device; no data leaves the device.
+
+2. ONNX Runtime for Android 1.31.1 (libonnxruntime.so, libonnxruntime4j_jni.so,
+   and the Java binding compiled into classes.dex)
+--------------------------------------------------
+Source project: https://github.com/microsoft/onnxruntime
+License: MIT
+Pinned artifact: onnxruntime-android 1.31.1 AAR from Maven Central,
+  SHA-256 d4d50660300ed2c4f38ffdfd5ab5bfa3a22f995f282dda24f42ea3ea55467b49
+
+Both licenses follow. The MIT text is preserved verbatim.
+
+--- MIT License, ddddocr (Copyright (c) 2022 ddddocr contributors) ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--- MIT License, ONNX Runtime (Copyright (c) Microsoft Corporation) ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
