@@ -96,7 +96,7 @@ public final class DektActivity extends Activity {
         back.addView(new CampusUi.Icon(this, "back", CampusUi.GREEN), new LinearLayout.LayoutParams(dp(22), dp(22)));
         back.setContentDescription("返回");
         back.setFocusable(true);
-        back.setOnClickListener(v -> leave());
+        back.setOnClickListener(v -> onBackPressed());
         bar.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
         TextView title = CampusUi.text(this, SchoolCatalog.title("second"), 18, CampusUi.INK);
         title.setTypeface(null, Typeface.BOLD);
@@ -151,7 +151,7 @@ public final class DektActivity extends Activity {
 
     /** 导入页可能独占一个任务，返回时要回到主界面而不是直接退出应用。 */
     private void leave() {
-        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class));
+        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class).putExtra("tab", 1));
         finish();
     }
 
@@ -1032,9 +1032,7 @@ public final class DektActivity extends Activity {
         if (!store.isCurrent()) { finish(); return; }
         if (message != null && !message.isEmpty())
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-        startActivity(new Intent(this, MainActivity.class).putExtra("tab", 0)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
-        finish();
+        leave();
     }
 
     private static String unquote(String value) {

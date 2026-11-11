@@ -27,7 +27,7 @@ public final class SchoolLoginActivity extends Activity {
         if(AppSession.valid(this)&&!account.username(pg).isEmpty()&&!getIntent().getBooleanExtra("edit",false)){open(account.username(pg),"",false,false);return;}
         LinearLayout root=CampusUi.column(this);root.setBackground(CampusUi.wash(true));CampusUi.insets(root);
         ScrollView scroll=new ScrollView(this);LinearLayout form=CampusUi.column(this);int d=CampusUi.dp(this,24);form.setPadding(d,CampusUi.dp(this,12),d,d);form.setBackgroundColor(0xeeffffff);scroll.addView(form);root.addView(scroll,new LinearLayout.LayoutParams(-1,-1));setContentView(root);
-        if(AppSession.valid(this)){Button back=CampusUi.button(this,"返回",false,v->finish());form.addView(back,new LinearLayout.LayoutParams(-2,CampusUi.dp(this,44)));}
+        if(AppSession.valid(this)){Button back=CampusUi.button(this,"返回",false,v->onBackPressed());form.addView(back,new LinearLayout.LayoutParams(-2,CampusUi.dp(this,44)));}
         TextView title=CampusUi.text(this,"学校账号登录",23,CampusUi.INK);title.setTypeface(null,android.graphics.Typeface.BOLD);title.setPadding(0,d,0,CampusUi.dp(this,12));form.addView(title);
         TextView hint=CampusUi.text(this,"上海应用技术大学 · "+(pg?"研究生":"本科生")+"\n账号密码与学校统一认证一致，验证通过后才能使用。",14,CampusUi.MUTED);hint.setLineSpacing(CampusUi.dp(this,5),1);form.addView(hint);
         String message=getIntent().getStringExtra("message");if(message!=null&&!message.isEmpty()){TextView notice=CampusUi.text(this,message,13,0xffa14e36);notice.setPadding(0,d/2,0,d/2);form.addView(notice);}

@@ -69,7 +69,15 @@ public final class ElectricityStore {
         if (!choosing && previous != null && (!roomId.equals(previous.optString("roomId"))
                 || !buildingId.equals(previous.optString("buildingId"))))
             throw new IllegalStateException("学校当前寝室与已保存的不同，请用“切换宿舍”确认");
-        saved.put("portalRoom", new JSONObject().put("name", name).put("roomId", roomId).put("buildingId", buildingId))
+        JSONObject selected=new JSONObject().put("name",name).put("roomId",roomId).put("buildingId",buildingId);
+        if(raw.optString("buildingNumber").matches("[0-9]{1,4}")&&raw.optString("roomNumber").matches("[0-9]{1,8}"))
+            selected.put("buildingNumber",raw.getString("buildingNumber")).put("roomNumber",raw.getString("roomNumber"))
+                .put("selection",raw.optJSONArray("selection"));
+        else if(previous!=null&&roomId.equals(previous.optString("roomId"))&&buildingId.equals(previous.optString("buildingId"))){
+            selected.put("buildingNumber",previous.optString("buildingNumber")).put("roomNumber",previous.optString("roomNumber"))
+                .put("selection",previous.optJSONArray("selection"));
+        }
+        saved.put("portalRoom", selected)
             .put("balance", portalAmount(value))
             .put("updatedAt", System.currentTimeMillis());
         write(saved);

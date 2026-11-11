@@ -86,6 +86,7 @@ public final class SchoolWebActivity extends Activity {
     private int electricityRead;
     private boolean electricitySsoAttempted;
     private org.json.JSONObject electricityRoom;
+    private org.json.JSONObject electricityMatch;
     private ElectricityStore electricityStore;
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density*v+.5f); }
     @Override public void onCreate(Bundle state) {
@@ -369,6 +370,12 @@ public final class SchoolWebActivity extends Activity {
         if(navigationFailed||!"electricity".equals(service)||!SchoolCatalog.isEcardPortal(url))return;
         boolean rechargePage=isElectricityRechargePage(url);
         localizeElectricityRecharge(view,url);
+        if(hasRequestedElectricityRoom()&&electricityMatch==null){
+            int request=++electricityRead;
+            status.setText("正在匹配楼栋和寝室号…");
+            matchElectricityRoom(view,url,request,0);
+            return;
+        }
         if(!isElectricityQuery())return;
 
         int request=++electricityRead;
@@ -395,6 +402,54 @@ public final class SchoolWebActivity extends Activity {
         String script=readAsset("electricity-portal-balance.js");
         pollPortalElectricity(view,url,script,request,0);
     }
+    private boolean hasRequestedElectricityRoom(){
+        String building=getIntent().getStringExtra("electricityBuilding");
+        String room=getIntent().getStringExtra("electricityRoomNumber");
+        return building!=null&&building.matches("[0-9]{1,4}")&&room!=null&&room.matches("[0-9]{1,8}");
+    }
+    private void matchElectricityRoom(WebView view,String url,int request,int attempt){
+        if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession()||!url.equals(view.getUrl()))return;
+        String path=Uri.parse(url).getPath();
+        if(!isElectricityRechargePage(url)&&!"/epeortal/pages/h5/elecQuery".equals(path))return;
+        if(attempt>=225){returnElectricityError("匹配寝室超时，请稍后重试");return;}
+        try{
+            org.json.JSONObject plan=new org.json.JSONObject()
+                .put("building",getIntent().getStringExtra("electricityBuilding"))
+                .put("room",getIntent().getStringExtra("electricityRoomNumber"));
+            String script=readAsset("electricity-room-match.js");
+            if(script.isEmpty()){returnElectricityError("寝室匹配组件缺失，请重新安装");return;}
+            view.evaluateJavascript(script.replace("__ELECTRICITY_ROOM_MATCH__",plan.toString()),value->{
+                if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession()||!url.equals(view.getUrl()))return;
+                try{
+                    org.json.JSONObject result=new org.json.JSONObject(unquote(value));
+                    String state=result.optString("status");
+                    if("failed".equals(state)){
+                        String reason=result.optString("reason");
+                        // History can expose the new URL before JavaScript switches documents.
+                        // The adapter has made no changes on an unexpected origin/path; wait for commit.
+                        if("page".equals(reason)){
+                            autoHandler.postDelayed(()->matchElectricityRoom(view,url,request,attempt+1),400);
+                            return;
+                        }
+                        returnElectricityError("ambiguous".equals(reason)?"学校返回多个同名选项，未选择寝室，请联系一卡通中心核对"
+                            :"timeout".equals(reason)?"学校寝室选项加载超时，请稍后重试"
+                            :"未找到对应的寝室，请检查楼栋和寝室号；学校选项可能已变化");
+                        return;
+                    }
+                    if("matched".equals(state)){
+                        electricityMatch=result.getJSONObject("room");
+                        status.setText("已匹配："+electricityMatch.getJSONArray("selection").join(" · ").replace("\"",""));
+                        view.evaluateJavascript("window.__xinxinDormMatch.submit()",submitted->{
+                            if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession())return;
+                            if(!"submitted".equals(unquote(submitted)))returnElectricityError("学校寝室选项已变化，请重新查询");
+                        });
+                        return;
+                    }
+                }catch(Exception ignored){}
+                autoHandler.postDelayed(()->matchElectricityRoom(view,url,request,attempt+1),400);
+            });
+        }catch(Exception ignored){returnElectricityError("寝室编号无法识别，请重新输入");}
+    }
     private void pollPortalElectricity(WebView view,String url,String script,int request,int attempt){
         if(isFinishing()||view!=web||request!=electricityRead
             ||electricityStore==null||!electricityStore.isCurrent()||!isCurrentSession())return;
@@ -418,13 +473,13 @@ public final class SchoolWebActivity extends Activity {
                 return;
             }
             String payload=unquote(value);
-            if(choosesElectricityRoom()&&!payload.isEmpty()){
+            if(choosesElectricityRoom()&&!hasRequestedElectricityRoom()&&!payload.isEmpty()){
                 view.setVisibility(View.VISIBLE);
                 status.setText("可在下方重新选择，或使用当前宿舍");
             }
             try{
                 electricityRoom=new org.json.JSONObject(payload);
-                if(choosesElectricityRoom())confirmElectricityRoom.setVisibility(View.VISIBLE);
+                if(choosesElectricityRoom()&&!hasRequestedElectricityRoom())confirmElectricityRoom.setVisibility(View.VISIBLE);
                 else savePortalElectricity(electricityRoom);
             }catch(org.json.JSONException pending){
                 autoHandler.postDelayed(()->pollPortalElectricity(view,url,script,request,attempt+1),400);
@@ -435,6 +490,14 @@ public final class SchoolWebActivity extends Activity {
         if(room==null||electricityStore==null||!electricityStore.isCurrent()||!isCurrentSession()
             ||web==null||!isElectricityRechargePage(web.getUrl()))return;
         try{
+            if(hasRequestedElectricityRoom()){
+                if(electricityMatch==null||!electricityMatch.getString("roomId").equals(room.optString("roomId"))
+                    ||!electricityMatch.getString("buildingId").equals(room.optString("buildingId")))
+                    throw new IllegalStateException("学校返回的寝室与输入不一致，本次结果未保存");
+                room.put("buildingNumber",electricityMatch.getString("buildingNumber"))
+                    .put("roomNumber",electricityMatch.getString("roomNumber"))
+                    .put("selection",electricityMatch.getJSONArray("selection"));
+            }
             electricityStore.savePortalBalance(room,choosesElectricityRoom());
             setResult(RESULT_OK);
             leaveSchool();
@@ -870,7 +933,7 @@ public final class SchoolWebActivity extends Activity {
     private void resumeTarget(){
         SchoolSession.endReauth(this,authFlowId);
         SessionPolicy.Target target=SessionPolicy.target(returnService);
-        Intent main=new Intent(this,MainActivity.class).putExtra("tab",0)
+        Intent main=new Intent(this,MainActivity.class).putExtra("tab",target==SessionPolicy.Target.TIMETABLE||target==SessionPolicy.Target.MAIN?0:1)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
         Intent next;
         switch(target){
@@ -1323,9 +1386,9 @@ public final class SchoolWebActivity extends Activity {
                         else startSecondClassSync();
                         return;
                     }
-                    // 刷新入口可能在登录前已被清理，读完统一回到对应的列表页。
+                    // Reuse the caller list and preserve its parent instead of clearing the task.
                     startActivity(new Intent(this,AcademicActivity.class).putExtra("service",target)
-                        .putExtra("postgraduate",postgraduate).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+                        .putExtra("postgraduate",postgraduate).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));
                     finish();
                 });
             }catch(Exception e){
@@ -1516,9 +1579,7 @@ public final class SchoolWebActivity extends Activity {
         dialog.show();
     }
     @Override public void onBackPressed() {
-        if("code".equals(service)||"electricity".equals(service)||!AppSession.valid(this)){leaveSchool();return;}
-        if(autoSync&&!authenticationAccepted&&web!=null&&SessionPolicy.isLoginUrl(web.getUrl())){leaveSchool();return;}
-        if(web!=null&&web.canGoBack())web.goBack();else finish();
+        leaveSchool();
     }
     @Override protected void onPause() { cardForeground=false;stopCardWatch();if(web!=null&&!mainPreviewed) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume();cardForeground=true; if(web!=null){web.onResume();startCardWatch();} }

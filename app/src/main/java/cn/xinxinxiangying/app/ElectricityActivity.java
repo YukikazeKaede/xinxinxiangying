@@ -4,45 +4,33 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
-import android.webkit.*;
 import android.widget.*;
 import org.json.JSONObject;
-import org.json.JSONTokener;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.text.SimpleDateFormat;
-import java.util.Collections;
 import java.util.Date;
 import java.util.Locale;
 
-/** Native electricity overview backed by the school's existing read-only room selectors. */
+/** Two-field dormitory lookup; selection and balance use the school's own portal. */
 public final class ElectricityActivity extends Activity {
-    private final Handler handler = new Handler(Looper.getMainLooper());
     private ElectricityStore store;
-    private LinearLayout home, school;
-    private TextView amount, balanceTitle, updated, bedroom, webHint, webTitle;
-    private Button updateButton, rechargeButton, saveButton;
-    private WebView web;
-    private String script, loginScript, operation = "", error = "";
-    private JSONObject expectedRoom;
-    private boolean choosing, refreshing, showingSchool, attemptedLogin;
-    private int generation;
+    private LinearLayout home;
+    private TextView amount, balanceTitle, updated, bedroom;
+    private EditText buildingInput, roomInput;
+    private Button updateButton, rechargeButton;
+    private String error = "";
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state); CampusUi.window(this);
         if (!AppSession.require(this, "electricity")) return;
         store = new ElectricityStore(this);
-        script = asset("electricity-page.js"); loginScript = asset("school-login.js");
-        android.widget.FrameLayout root = new android.widget.FrameLayout(this);
-        school = buildSchool(); root.addView(school, new android.widget.FrameLayout.LayoutParams(-1, -1));
-        home = buildHome(); root.addView(home, new android.widget.FrameLayout.LayoutParams(-1, -1));
-        setContentView(root); render();
+        home = buildHome(); setContentView(home);
+        JSONObject saved = store.read(), room = saved == null ? null : saved.optJSONObject("portalRoom");
+        buildingInput.setText(state != null ? state.getString("building", "") : room == null ? "" : room.optString("buildingNumber"));
+        roomInput.setText(state != null ? state.getString("room", "") : room == null ? "" : room.optString("roomNumber"));
+        render();
     }
     private int dp(int value) { return CampusUi.dp(this, value); }
     private LinearLayout header(String title, View.OnClickListener back) {
@@ -68,6 +56,11 @@ public final class ElectricityActivity extends Activity {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         LinearLayout content = CampusUi.column(this); content.setPadding(0, 0, 0, dp(24)); scroll.addView(content);
         page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout form = card(content);
+        buildingInput = roomInput(form, "楼栋", "例如：23", "electricity-building", 4);
+        roomInput = roomInput(form, "寝室号", "例如：1104", "electricity-room", 8);
+        form.addView(note("填写楼栋和寝室号，自动匹配学校的电控系统、校区、区域、楼栋、楼层和房间。"));
+        form.addView(CampusUi.button(this, "查询电费", true, v -> queryRoom()), new LinearLayout.LayoutParams(-1, dp(48)));
         LinearLayout balance = card(content), top = new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL);
         top.addView(new CampusUi.Icon(this, "electricity", CampusUi.GREEN), new LinearLayout.LayoutParams(dp(24), dp(24)));
         balanceTitle = CampusUi.text(this, "寝室剩余电费", 16, CampusUi.INK); balanceTitle.setTypeface(null, Typeface.BOLD);
@@ -85,10 +78,10 @@ public final class ElectricityActivity extends Activity {
         label.setTypeface(null, Typeface.BOLD); labels.addView(label);
         bedroom = CampusUi.text(this, "尚未选择寝室", 13, CampusUi.MUTED); bedroom.setPadding(0, dp(7), dp(10), 0);
         bedroom.setLineSpacing(dp(3), 1); labels.addView(bedroom); room.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        Button change = CampusUi.button(this, "选择宿舍", false, v -> chooseRoom()); change.setTag("change-room");
+        Button change = CampusUi.button(this, "修改", false, v -> { buildingInput.requestFocus(); ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(buildingInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT); }); change.setTag("change-room");
         room.addView(change, new LinearLayout.LayoutParams(-2, dp(44))); balance.addView(room);
         LinearLayout notes = card(content);
-        notes.addView(note("点“更新”读取学校显示的电费余额。学校每天更新一次数据。"));
+        notes.addView(note("学校电费余额每天更新一次，以学校记录和电表为准。"));
         notes.addView(note("缴费成功后，学校系统需要对账和同步，可稍后点上方“更新”核对。"));
         notes.addView(note("温馨提示：如对充值过程和结果有疑问，请直接咨询学校的后勤或一卡通中心。"));
         LinearLayout footer = CampusUi.column(this); footer.setPadding(dp(16), dp(12), dp(16), dp(16));
@@ -99,149 +92,34 @@ public final class ElectricityActivity extends Activity {
         TextView line = CampusUi.text(this, value, 13, CampusUi.MUTED); line.setLineSpacing(dp(6), 1);
         line.setPadding(0, 0, 0, dp(10)); return line;
     }
-    private LinearLayout buildSchool() {
-        LinearLayout page = CampusUi.column(this); page.setBackgroundColor(CampusUi.BG); CampusUi.insets(page);
-        LinearLayout bar = header("选择寝室", v -> cancelSchool()); webTitle = (TextView) bar.getChildAt(1); page.addView(bar);
-        webHint = CampusUi.text(this, "校区和区域会自动填写，请选择楼栋、楼层和房间。", 12, CampusUi.MUTED);
-        webHint.setPadding(dp(20), dp(10), dp(20), dp(12)); page.addView(webHint);
-        web = new WebView(this); WebSettings settings = web.getSettings();
-        settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setSaveFormData(false);
-        settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        if (android.os.Build.VERSION.SDK_INT >= 26) settings.setSafeBrowsingEnabled(true);
-        CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
-        page.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
-        LinearLayout footer = CampusUi.column(this); footer.setPadding(dp(16), dp(12), dp(16), dp(16));
-        saveButton = CampusUi.button(this, "保存寝室", false, v -> saveRoom()); footer.addView(saveButton, new LinearLayout.LayoutParams(-1, dp(52))); page.addView(footer);
-        web.setWebViewClient(new WebViewClient() {
-            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return !SchoolCatalog.isSchoolUrl(request.getUrl().toString());
-            }
-            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (request.isForMainFrame() && !SchoolCatalog.isSchoolUrl(request.getUrl().toString()))
-                    return new WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", Collections.emptyMap(), new java.io.ByteArrayInputStream(new byte[0]));
-                return null;
-            }
-            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
-                if (view != web) return; generation++; handler.removeCallbacksAndMessages(null);
-                final int token = generation;
-                handler.postDelayed(() -> { if (active(token) && refreshing && !showingSchool) failed("读取学校电费超时，已保留上次余额"); }, 65000);
-            }
-            @Override public void onPageFinished(WebView view, String url) {
-                if (view != web || isFinishing() || !store.isCurrent() || !url.equals(view.getUrl()) || operation.isEmpty()) return;
-                CookieManager.getInstance().flush();
-                if (SessionPolicy.isAuthHost(Uri.parse(url).getHost())) { inspectAuth(); return; }
-                if (url.startsWith("https://ecard.sit.edu.cn/") && Uri.parse(url).getPath().contains("login")) { showSchool(true); return; }
-                if (!isElectricityPage(url)) { failed("学校电费页面尚未就绪，请返回后重试"); return; }
-                final int token = generation;
-                if (choosing) {
-                    showSchool(false);
-                    JSONObject saved = store.read(), room = saved == null ? null : saved.optJSONObject("room");
-                    // The adapter fills 电控校区/缴费校区/缴费区域 itself and reports a finished room,
-                    // which is saved without another tap on 保存寝室.
-                    run(plan("choose", room), token, result -> {
-                        String status = result.optString("status");
-                        if ("complete".equals(status)) { commitRoom(result); return; }
-                        if ("failed".equals(status)) { selectionFailed(result); return; }
-                        saveButton.setEnabled(true);
-                        poll(token, 0, true);
-                    });
-                } else {
-                    showHome(); run(plan("balance", expectedRoom), token, result -> arrived(token, result));
-                }
-            }
-            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame() && view == web && request.getUrl().toString().equals(view.getUrl())) failed("连接学校失败，已保留上次余额");
-            }
-            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-                if (request.isForMainFrame() && view == web && request.getUrl().toString().equals(view.getUrl())) failed("学校电费页面暂不可用，请稍后重试");
-            }
-            @Override public void onReceivedSslError(WebView view, SslErrorHandler callback, android.net.http.SslError error) {
-                callback.cancel(); if (view == web) failed("无法验证学校网站证书，请稍后重试");
-            }
-        });
-        return page;
+    private EditText roomInput(LinearLayout form, String label, String hint, String tag, int max) {
+        TextView title = CampusUi.text(this, label, 14, CampusUi.INK); form.addView(title);
+        EditText input = new EditText(this); input.setSingleLine(true); input.setTextSize(17);
+        input.setTextColor(CampusUi.INK); input.setHint(hint); input.setTag(tag); input.setContentDescription(label);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(max)});
+        form.addView(input, new LinearLayout.LayoutParams(-1, dp(52))); title.setLabelFor(View.generateViewId());
+        input.setId(title.getLabelFor()); return input;
     }
-    private static JSONObject plan(String action, JSONObject room) {
-        try { JSONObject value = new JSONObject().put("action", action); if (room != null) value.put("room", room); return value; }
-        catch (Exception impossible) { throw new IllegalStateException(impossible); }
+    private void queryRoom() {
+        String building = buildingInput.getText().toString().trim(), room = roomInput.getText().toString().trim();
+        if (!building.matches("[0-9]{1,4}")) { buildingInput.setError("请输入楼栋编号，例如 23"); buildingInput.requestFocus(); return; }
+        if (!room.matches("[0-9]{1,8}")) { roomInput.setError("请输入寝室号，例如 1104"); roomInput.requestFocus(); return; }
+        openPortal(false, true, building, room);
     }
-    private interface Result { void accept(JSONObject value); }
-    private void run(JSONObject plan, int token, Result callback) {
-        if (script.isEmpty()) { failed("电费读取组件缺失，请重新安装"); return; }
-        web.evaluateJavascript(script.replace("__ELECTRICITY_PLAN__", plan.toString()), value -> {
-            if (!active(token)) return; callback.accept(decode(value));
-        });
+    private void refresh() { queryRoom(); }
+    private void recharge() {
+        JSONObject saved = store.read(), room = saved == null ? null : saved.optJSONObject("portalRoom");
+        if (room == null) { queryRoom(); return; }
+        openPortal(true, false, room.optString("buildingNumber"), room.optString("roomNumber"));
     }
-    private JSONObject decode(String value) {
-        try { Object text = new JSONTokener(value).nextValue(); return new JSONObject(text instanceof String ? (String) text : "{}"); }
-        catch (Exception ignored) { return new JSONObject(); }
-    }
-    private boolean active(int token) { return token == generation && !isFinishing() && !isDestroyed() && store.isCurrent() && !operation.isEmpty(); }
-    private static boolean isElectricityPage(String url) {
-        if (!SchoolCatalog.isSchoolUrl(url)) return false;
-        Uri uri = Uri.parse(url); String host = uri.getHost(), path = uri.getPath();
-        return host != null && "ecard.sit.edu.cn".equalsIgnoreCase(host) && path != null && path.startsWith("/epay/");
-    }
-    /** Runs after the plan; the school answers on a second page, so pending keeps polling. */
-    private void arrived(int token, JSONObject result) {
-        if (!active(token)) return;
-        String status = result.optString("status");
-        if ("complete".equals(status) || "failed".equals(status)) settled(token, result);
-        else poll(token, 0, false);
-    }
-    private void poll(int token, int attempt, boolean selection) {
-        if (!active(token)) return;
-        if (attempt > (selection ? 600 : 115)) {
-            if (selection) { saveButton.setEnabled(true); webHint.setText("请重新选择寝室，完成后保存。"); }
-            else failed("读取超时，请稍后点“更新”重试");
-            return;
-        }
-        web.evaluateJavascript("window.__xinxinElectricityPage?JSON.stringify(window.__xinxinElectricityPage):''", value -> {
-            if (!active(token)) return; JSONObject result = decode(value); String status = result.optString("status");
-            if ("complete".equals(status)) { if (selection) commitRoom(result); else settled(token, result); }
-            else if ("failed".equals(status)) { if (selection) selectionFailed(result); else settled(token, result); }
-            else handler.postDelayed(() -> poll(token, attempt + 1, selection), selection ? 700 : 500);
-        });
-    }
-    /** Stores a room completed on the school page; the caller may be the adapter or 保存寝室. */
-    private void commitRoom(JSONObject result) {
-        try {
-            store.saveRoom(result.optJSONObject("room"));
-            choosing = false; showHome(); render(); refresh();
-        } catch (Exception failure) {
-            saveButton.setEnabled(true);
-            webHint.setText(failure.getMessage() == null ? "寝室未保存，请重新选择" : failure.getMessage());
-        }
-    }
-    private void selectionFailed(JSONObject result) {
-        saveButton.setEnabled(true);
-        String reason = result.optString("reason");
-        if ("login".equals(reason)) { showSchool(true); return; }
-        if ("page".equals(reason)) { webHint.setText("学校电费页面结构已变化，请返回后重试"); return; }
-        if ("moved".equals(reason)) { webHint.setText("学校页面已跳转，请返回后重新选择"); return; }
-        if ("selector".equals(reason)) { webHint.setText("学校寝室选项无法自动填写，请手动选择"); return; }
-        if ("timeout".equals(reason)) { webHint.setText("选择超时，请重新选择寝室"); return; }
-        webHint.setText("请重新选择寝室，完成后保存。");
-    }
-    private void settled(int token, JSONObject result) {
-        boolean complete = "complete".equals(result.optString("status"));
-        if (complete) {
-            try { store.saveBalance(expectedRoom, result); refreshing = false; operation = ""; error = ""; render(); }
-            catch (Exception ignored) { failed("寝室或账号已变化，本次结果未保存"); }
-            return;
-        }
-        String reason = result.optString("reason");
-        if ("login".equals(reason)) { showSchool(true); return; }
-        failed(readFailure(reason));
-    }
-    private static String readFailure(String reason) {
-        if ("room".equals(reason)) return "学校页面寝室与已保存的不一致，请重新选择寝室";
-        if ("page".equals(reason)) return "学校电费页面结构已变化，请返回后重试";
-        if ("moved".equals(reason)) return "学校页面已跳转，请重新点“更新”";
-        if ("selector".equals(reason)) return "学校寝室选项无法恢复，请重新选择寝室";
-        if ("query".equals(reason)) return "学校查询无法提交，请重新点“更新”";
-        if ("timeout".equals(reason)) return "读取学校电费超时，请稍后点“更新”重试";
-        return "未读取到当前寝室余额，已保留上次数据";
+    private void openPortal(boolean recharge, boolean choose, String building, String room) {
+        if (!store.isCurrent()) { finish(); return; }
+        ((android.view.inputmethod.InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(buildingInput.getWindowToken(), 0);
+        startActivityForResult(new Intent(this, SchoolWebActivity.class).putExtra("service", "electricity")
+            .putExtra("electricityRecharge", recharge).putExtra("electricityChoose", choose)
+            .putExtra("electricityBuilding", building).putExtra("electricityRoomNumber", room)
+            .putExtra("postgraduate", getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false)), 1);
     }
     private void render() {
         JSONObject saved = store.read(), room = saved == null ? null : saved.optJSONObject("room");
@@ -251,99 +129,22 @@ public final class ElectricityActivity extends Activity {
         balanceTitle.setText(energy ? "宿舍剩余电量" : "宿舍剩余电费");
         amount.setText(balance == null ? "—" : (energy ? "" : "￥") + balance.optString("value") + (energy ? " 度" : ""));
         bedroom.setText(portalRoom == null ? ElectricityParser.description(room) : portalRoom.optString("name"));
-        ((Button) home.findViewWithTag("change-room")).setText(room == null && portalRoom == null ? "选择宿舍" : "切换宿舍");
         String stamp = saved == null || saved.optLong("updatedAt") == 0 ? "尚未读取余额" : "更新于 "
             + new SimpleDateFormat("M月d日 HH:mm", Locale.CHINA).format(new Date(saved.optLong("updatedAt")));
-        updated.setText(refreshing ? "正在读取学校电费…" : !error.isEmpty() ? error + "\n" + stamp : room == null && portalRoom == null ? "请选择宿舍或点“更新”读取学校已选寝室" : stamp);
-        updateButton.setEnabled(!refreshing); rechargeButton.setEnabled(true);
+        updated.setText(!error.isEmpty() ? error + "\n" + stamp : portalRoom == null ? "填写楼栋和寝室号后查询" : stamp);
+        rechargeButton.setEnabled(portalRoom != null);
     }
-    private void stop() { generation++; handler.removeCallbacksAndMessages(null); web.stopLoading(); operation = ""; refreshing = false; }
-    private void showHome() { showingSchool = false; home.setVisibility(View.VISIBLE); web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS); }
-    private void showSchool(boolean authentication) {
-        web.setEnabled(true);
-        showingSchool = true; home.setVisibility(View.GONE); web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-        webTitle.setText(authentication ? "学校验证" : "选择寝室"); saveButton.setVisibility(authentication ? View.GONE : View.VISIBLE);
-        webHint.setText(authentication ? "请完成学校验证，完成后会继续读取电费。"
-            : "校区和区域会自动填写，请选择楼栋、楼层和房间；选完自动保存。");
-    }
-    private void chooseRoom() { openPortal(false, true); }
-    private void refresh() { openPortal(false, false); }
-    private void openPortal(boolean recharge, boolean choose) {
-        stop();
-        startActivityForResult(new Intent(this, SchoolWebActivity.class)
-            .putExtra("service", "electricity")
-            .putExtra("electricityRecharge", recharge)
-            .putExtra("electricityChoose", choose)
-            .putExtra("postgraduate", getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false)), 1);
-    }
-    private void saveRoom() {
-        final int token = generation; run(plan("capture", null), token, result -> {
-            if (!"complete".equals(result.optString("status"))) { webHint.setText("请先完成楼栋、楼层和房间选择"); return; }
-            commitRoom(result);
-        });
-    }
-    private void recharge() { openPortal(true, false); }
-    /**
-     * The school answers a rejected application with its own error page instead of a login form.
-     * Reading those words is the difference between a clear reason and an endless 正在读取.
-     */
-    private void inspectAuth() {
-        final int token = generation;
-        web.evaluateJavascript("(function(){var t=(document.body&&document.body.innerText)||'';"
-            + "if(t.indexOf('未授权的访问')>=0||t.indexOf('不允许访问目标应用')>=0)return 'denied';"
-            + "if(t.indexOf('应用未注册')>=0)return 'unregistered';"
-            + "return document.querySelector('input[type=password]')?'login':'other';})()", value -> {
-            if (!active(token)) return;
-            String state = text(value);
-            if ("denied".equals(state)) { failed("学校未向本账号开放电费应用（未授权的访问），请联系一卡通中心"); return; }
-            if ("unregistered".equals(state)) { failed("学校电费应用未在统一认证注册，请联系信息化办公室"); return; }
-            authenticate();
-        });
-    }
-    private static String text(String value) {
-        try { Object parsed = new JSONTokener(value).nextValue(); return parsed instanceof String ? (String) parsed : ""; }
-        catch (Exception ignored) { return ""; }
-    }
-    private void authenticate() {
-        final int token = generation;
-        if (loginScript.isEmpty()) { showSchool(true); return; }
-        JSONObject credentials = new JSONObject();
-        boolean pg = getSharedPreferences("school_profile", 0).getBoolean("postgraduate", false);
-        JSONObject remembered = new SchoolAccount(this).remembered(pg);
-        try {
-            if (!attemptedLogin && remembered != null) credentials.put("username", remembered.optString("username"))
-                .put("password", remembered.optString("password")).put("submit", true);
-        } catch (Exception ignored) { showSchool(true); return; }
-        attemptedLogin = true;
-        web.evaluateJavascript(loginScript.replace("__CREDENTIALS__", credentials.toString()), value -> {
-            if (!active(token)) return;
-            String state = text(value);
-            if ("rejected".equals(state)) new SchoolAccount(this).forget(pg);
-            if ("submitted".equals(state)) handler.postDelayed(() -> { if (active(token) && SessionPolicy.isAuthHost(Uri.parse(web.getUrl()).getHost())) authenticate(); }, 1000);
-            else if (!"not-login".equals(state)) showSchool(true);
-        });
-    }
-    private void failed(String message) { refreshing = false; error = message; if (choosing || showingSchool) { saveButton.setEnabled(true); webHint.setText(message); } else { operation = ""; render(); } }
-    private void cancelSchool() { stop(); choosing = false; showHome(); render(); if (store.read() == null) leave(); }
     private void leave() { if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class).putExtra("tab", 1)); finish(); }
-    @Override public void onBackPressed() { if (showingSchool) cancelSchool(); else leave(); }
+    @Override public void onBackPressed() { leave(); }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request != 1 || store == null || !store.isCurrent()) return;
-        error = data == null ? "" : data.getStringExtra("electricityError");
-        if (error == null) error = "";
+        error = data == null ? "" : data.getStringExtra("electricityError"); if (error == null) error = "";
         render();
     }
-    @Override protected void onResume() {
-        super.onResume(); if (store == null || home == null) return;
-        if (!store.isCurrent()) { finish(); return; }
-        render();
+    @Override public void onSaveInstanceState(Bundle state) {
+        super.onSaveInstanceState(state);
+        if (buildingInput != null) { state.putString("building", buildingInput.getText().toString()); state.putString("room", roomInput.getText().toString()); }
     }
-    @Override protected void onPause() { if (web != null && refreshing && !showingSchool) { stop(); render(); } super.onPause(); }
-    @Override protected void onDestroy() { handler.removeCallbacksAndMessages(null); if (web != null) { web.stopLoading(); web.destroy(); web = null; } super.onDestroy(); }
-    private String asset(String name) {
-        try (InputStream input = getAssets().open(name); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] bytes = new byte[4096]; int count; while ((count = input.read(bytes)) >= 0) output.write(bytes, 0, count); return output.toString("UTF-8");
-        } catch (Exception ignored) { return ""; }
-    }
+    @Override protected void onResume() { super.onResume(); if (store != null && home != null) { if (!store.isCurrent()) finish(); else render(); } }
 }
