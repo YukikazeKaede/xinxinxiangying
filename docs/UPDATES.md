@@ -20,11 +20,28 @@
 - `sha256` 必须与 APK 实际哈希一致；`size` 为字节数。
 - 客户端在 `app/src/main/res/values/strings.xml` 的 `update_manifest_url` 读取清单地址。
 
+## 四种架构独立发布
+
+每个 Release 上传 `xinxin_<versionName>-arm64-v8a.apk`、`xinxin_<versionName>-armeabi-v7a.apk`、`xinxin_<versionName>-x86.apk`、`xinxin_<versionName>-x86_64.apk`。所有 APK 使用相同版本号与签名。
+
+清单保留原有顶层 `url`、`sha256`、`size`，指向 arm64-v8a 包，供旧版 arm64 客户端继续更新。新增 `artifacts` 对象，以四种 ABI 名为键，每项各自包含 `url`、`sha256`、`size`；新客户端按设备支持顺序选择兼容架构，清单没有兼容项时停止，不下载其他架构的包。
+
+生成前先将构建产物复制为上述四个发布文件名，然后执行：
+
+```powershell
+.\tools\make-update-json.ps1 -AllAbis `
+  -Apk .\dist\xinxin_<versionName>-arm64-v8a.apk `
+  -Url "https://github.com/YukikazeKaede/xinxinxiangying/releases/download/v<versionName>/xinxin_<versionName>-arm64-v8a.apk" `
+  -NotesFile .\notes.txt -OutFile .\update.json
+```
+
+脚本检查四个包版本一致、各自只含指定架构，并从实际文件生成摘要和字节数。单包模式不传 `-AllAbis`；未传 `-Apk` 时优先选择 arm64-v8a，避免误取最后生成的 x86_64 包。旧的单包清单格式继续可读。
+
 ## 发版流程
 
 1. 修改 `AndroidManifest.xml` 的 `versionCode` / `versionName`；
 2. 构建并验证 APK（同签名、可覆盖安装）；
-3. 上传 APK 到 GitHub Release，文件名统一 `xinxin_<versionName>.apk`；
+3. 上传 APK 到 GitHub Release，按上面的四种架构文件名命名；
 4. 用 `tools/make-update-json.ps1` 生成 `update.json`（读取版本、大小、SHA-256）；
 5. 上传/覆盖 `update.json`，asset 名保持 `update.json`；
 6. 把该 Release 设为 **latest**，让 `releases/latest/download/update.json` 指向它；
@@ -32,7 +49,7 @@
 
 ## 命名
 
-- APK：`xinxin_<versionName>.apk`，例如 `xinxin_0.6.8.apk`。
+- APK：`xinxin_<versionName>-<abi>.apk`；历史单包发布仍保留原文件名。
 - 清单 URL 末尾必须与 asset 文件名完全一致。GitHub 不支持重命名 asset，名字不对只能删除重传。
 - 同一 Release 内不要放多个同名 APK。
 

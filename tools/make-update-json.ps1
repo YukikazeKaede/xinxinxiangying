@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Url,
     [string]$Notes = '',
     [string]$NotesFile = '',
-    [string]$OutFile = ''
+    [string]$OutFile = '',
+    [switch]$AllAbis
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -17,7 +18,7 @@ if ($NotesFile) {
 
 if (-not $Apk) {
     $candidate = Get-ChildItem -LiteralPath (Join-Path $root 'dist') -Filter '*.apk' -File |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        Sort-Object @{ Expression = { if ($_.BaseName.EndsWith('-arm64-v8a')) { 0 } else { 1 } } }, @{ Expression = 'LastWriteTime'; Descending = $true } | Select-Object -First 1
     if (-not $candidate) { throw 'No APK found in dist; pass -Apk.' }
     $Apk = $candidate.FullName
 }
@@ -41,6 +42,29 @@ $manifest = [ordered]@{
     sha256 = $hash
     size = $size
     notes = $Notes
+}
+if ($AllAbis) {
+    if (-not $Apk.EndsWith('-arm64-v8a.apk')) { throw 'For -AllAbis, -Apk must be the arm64-v8a APK.' }
+    if (-not $Url.EndsWith('-arm64-v8a.apk')) { throw 'For -AllAbis, -Url must end with -arm64-v8a.apk.' }
+    $filePrefix = $Apk.Substring(0, $Apk.Length - '-arm64-v8a.apk'.Length)
+    $urlPrefix = $Url.Substring(0, $Url.Length - '-arm64-v8a.apk'.Length)
+    $artifacts = [ordered]@{}
+    foreach ($abi in @('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')) {
+        $file = $filePrefix + '-' + $abi + '.apk'
+        if (-not (Test-Path -LiteralPath $file)) { throw "Missing architecture APK: $file" }
+        $info = @(& $aapt2 dump badging $file 2>&1)
+        $infoPackage = $info | Where-Object { $_ -match '^package:' } | Select-Object -First 1
+        if (-not $infoPackage -or $infoPackage -notmatch ("versionCode='" + $code + "'") -or $infoPackage -notmatch ("versionName='" + [regex]::Escape($name) + "'")) {
+            throw "Architecture APK has a different version: $file"
+        }
+        if (-not ($info -contains ("native-code: '" + $abi + "'"))) { throw "APK must contain exactly one expected ABI: $file" }
+        $artifacts[$abi] = [ordered]@{
+            url = $urlPrefix + '-' + $abi + '.apk'
+            sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            size = (Get-Item -LiteralPath $file).Length
+        }
+    }
+    $manifest.artifacts = $artifacts
 }
 $json = $manifest | ConvertTo-Json -Depth 4
 

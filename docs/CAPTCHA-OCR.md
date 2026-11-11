@@ -101,7 +101,7 @@ SchoolWebActivity.handleChallenge()
 | `libonnxruntime4j_jni.so` | 122,576 B | ≈ 35 KB |
 | `charset.json` | 57,249 B | ≈ 22 KB |
 
-APK 由 1.2 MiB 变为 **20.06 MiB**。只发 `arm64-v8a`；要兼容 32 位再加 `armeabi-v7a`（约 +8.8 MB）。
+APK 由 1.2 MiB 变为 **20.06 MiB**。0.8.0 仅发布 `arm64-v8a`。后续构建按用户要求分别生成 `arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64` 四个独立 APK，各自只带对应原生库；实际体积和命令见 [BUILD.md](BUILD.md)。
 
 ## 构建
 

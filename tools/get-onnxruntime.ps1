@@ -1,4 +1,8 @@
-param([string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot))
+param(
+    [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot),
+    [ValidateSet('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')]
+    [string[]]$Abis = @('arm64-v8a')
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 # Approved exception: one pinned inference runtime for the on-device captcha model.
@@ -6,8 +10,7 @@ Set-StrictMode -Version Latest
 # verified against a fixed digest, exactly like the pinned payment SDK.
 $runtimeVersion = '1.31.1'
 $runtimeSha256 = 'd4d50660300ed2c4f38ffdfd5ab5bfa3a22f995f282dda24f42ea3ea55467b49'
-# Only arm64-v8a ships. Adding armeabi-v7a grows the APK by about 8.8 MB.
-$abis = @('arm64-v8a')
+# The caller extracts the requested ABIs; each APK contains one ABI only.
 $runtimeRoot = Join-Path $ProjectRoot ('toolchain/onnxruntime/' + $runtimeVersion)
 $archivePath = Join-Path $runtimeRoot ('onnxruntime-android-' + $runtimeVersion + '.aar')
 $runtimeUrl = 'https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/' + $runtimeVersion + '/onnxruntime-android-' + $runtimeVersion + '.aar'

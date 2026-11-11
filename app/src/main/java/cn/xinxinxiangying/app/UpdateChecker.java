@@ -140,9 +140,10 @@ public final class UpdateChecker {
             Manifest m = new Manifest();
             m.code = o.getInt("versionCode");
             m.name = o.getString("versionName").trim();
-            m.url = o.getString("url").trim();
-            m.sha256 = o.getString("sha256").trim().toLowerCase(Locale.ROOT);
-            m.size = o.optLong("size", 0);
+            JSONObject artifact = UpdateArtifact.select(o, Build.SUPPORTED_ABIS);
+            m.url = artifact.getString("url").trim();
+            m.sha256 = artifact.getString("sha256").trim().toLowerCase(Locale.ROOT);
+            m.size = artifact.optLong("size", 0);
             m.notes = o.optString("notes", "").trim();
             if (m.code <= 0 || m.name.isEmpty()) throw new IOException("更新清单的版本号无效");
             if (!m.url.startsWith("https://")) throw new IOException("更新下载地址必须是 HTTPS");

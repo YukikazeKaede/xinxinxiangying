@@ -55,14 +55,18 @@ toolchain/
 
 - 坐标：`https://repo.maven.apache.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/1.31.1/`
 - 固定 AAR SHA-256：`d4d50660300ed2c4f38ffdfd5ab5bfa3a22f995f282dda24f42ea3ea55467b49`
-- 缓存：`toolchain/onnxruntime/1.31.1/`（`classes.jar` 与 `arm64-v8a/*.so`），二进制不进入源码仓库
+- 缓存：`toolchain/onnxruntime/1.31.1/`（`classes.jar` 与各 ABI 的两份 `.so`），二进制不进入源码仓库
 - `build.ps1` 调用 `tools/get-onnxruntime.ps1`，每次校验摘要后重新提取；首次需要联网，之后可用校验通过的缓存离线构建
 
-`aapt2` 不会打包 native 库，所以 `.so` 在补 dex 的同一个 `ZipArchive` 更新块里注入，之后仍由 `Write-AlignedZip` 统一补 4 字节对齐。**注入必须在 `Write-AlignedZip` 之前**，否则 `zipalign -c -v 4` 会失败。
+`aapt2` 不会打包 native 库，所以 编译一次 Java/资源/dex 后，为每个 ABI 复制基础包并注入该 ABI 的 `.so`，之后仍由 `Write-AlignedZip` 统一补 4 字节对齐。**注入必须在 `Write-AlignedZip` 之前**，否则 `zipalign -c -v 4` 会失败。
 
 Manifest 显式写 `android:extractNativeLibs="true"`：此时 `.so` 可以 deflate 压缩存放（约 12.3 MB 而不是 34.2 MB），4 字节对齐就够。**不要**改成 `false`——那要求 `.so` 不压缩且按 4096 字节页对齐，现有 `Write-AlignedZip` 只做 4 字节，APK 也会涨到 40 MB 以上。
 
-当前只打 `arm64-v8a`。要兼容 32 位需在 `tools/get-onnxruntime.ps1` 的 `$abis` 里加 `armeabi-v7a`（约 +8.8 MB）。模型与字符表放在 `app/src/main/assets/ocr/`，按 `aapt2 link -A` 整体打包；`AssetManager.openFd` 对压缩条目不可用，运行时一律用 `open()` 读流。机制与实测数据见 [CAPTCHA-OCR.md](CAPTCHA-OCR.md)。
+默认分别构建 `arm64-v8a`、`armeabi-v7a`、`x86`、`x86_64`，每个 APK 只注入对应 ABI 的 `libonnxruntime.so` 和 `libonnxruntime4j_jni.so`。`-Abi <abi>` 可只构建一个；`-Abi all` 为默认值。依赖版本、AAR 摘要、压缩和截屏检查保持不变。
+
+本次实测 APK 约为 21.12 MB、19.87 MB、23.36 MB、23.22 MB（十进制），分别对应上述四种架构。成员原测试包的四套库合并在一起约 62.98 MB；现在各包只带一套。
+
+模型与字符表放在 `app/src/main/assets/ocr/`，按 `aapt2 link -A` 整体打包；`AssetManager.openFd` 对压缩条目不可用，运行时一律用 `open()` 读流。机制与实测数据见 [CAPTCHA-OCR.md](CAPTCHA-OCR.md)。
 
 ## 签名
 
@@ -91,7 +95,7 @@ keytool -genkeypair -keystore my-release.p12 -storetype PKCS12 `
 
 ## 输出
 
-`dist/心心相应-<versionName>.apk`，版本号读取自 `app/src/main/AndroidManifest.xml`。
+`dist/心心相应-<versionName>-<abi>.apk`，版本号读取自 `app/src/main/AndroidManifest.xml`。
 
 ## 常见问题
 
