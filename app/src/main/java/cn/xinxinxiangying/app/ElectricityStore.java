@@ -3,6 +3,8 @@ package cn.xinxinxiangying.app;
 import android.content.Context;
 import android.content.SharedPreferences;
 import org.json.JSONObject;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 /** Account-scoped selected dormitory and last successfully read balance. */
 public final class ElectricityStore {
@@ -18,7 +20,16 @@ public final class ElectricityStore {
     public boolean isCurrent() { return AppSession.valid(context) && owner.equals(key()); }
     public JSONObject read() {
         if (!isCurrent()) return null;
-        try { String raw = preferences().getString(owner, ""); return raw == null || raw.isEmpty() ? null : new JSONObject(raw); }
+        try {
+            String raw = preferences().getString(owner, "");
+            if (raw == null || raw.isEmpty()) return null;
+            JSONObject saved = new JSONObject(raw);
+            JSONObject balance = saved.optJSONObject("balance");
+            // The initial portal build saved the numeric amount correctly but tagged it as 度.
+            if (saved.optJSONObject("portalRoom") != null && balance != null && "度".equals(balance.optString("unit")))
+                saved.put("balance", portalAmount(balance.getString("value")));
+            return saved;
+        }
         catch (Exception ignored) { return null; }
     }
     private void write(JSONObject value) throws Exception {
@@ -42,6 +53,30 @@ public final class ElectricityStore {
         saved.put("room", parsed.getJSONObject("room")).put("balance", parsed.getJSONObject("balance"))
             .put("updatedAt", System.currentTimeMillis());
         write(saved);
+    }
+    public void savePortalBalance(JSONObject raw, boolean choosing) throws Exception {
+        String name = raw.optString("name").trim();
+        String roomId = raw.optString("roomId").trim();
+        String buildingId = raw.optString("buildingId").trim();
+        String value = raw.optString("value").trim();
+        if (name.isEmpty() || name.length() > 120 || name.matches("(?s).*[\\p{Cntrl}].*")
+            || !roomId.matches("[A-Za-z0-9_-]{1,64}") || !buildingId.matches("[A-Za-z0-9_-]{1,64}")
+            || !value.matches("-?\\d{1,8}(\\.\\d{1,4})?"))
+            throw new IllegalArgumentException("学校返回的寝室或电量格式无法识别");
+        JSONObject saved = read();
+        if (saved == null) saved = new JSONObject();
+        JSONObject previous = saved.optJSONObject("portalRoom");
+        if (!choosing && previous != null && (!roomId.equals(previous.optString("roomId"))
+                || !buildingId.equals(previous.optString("buildingId"))))
+            throw new IllegalStateException("学校当前寝室与已保存的不同，请用“切换宿舍”确认");
+        saved.put("portalRoom", new JSONObject().put("name", name).put("roomId", roomId).put("buildingId", buildingId))
+            .put("balance", portalAmount(value))
+            .put("updatedAt", System.currentTimeMillis());
+        write(saved);
+    }
+    private static JSONObject portalAmount(String value) throws org.json.JSONException {
+        String amount = new BigDecimal(value).setScale(2, RoundingMode.HALF_UP).toPlainString();
+        return new JSONObject().put("unit", "元").put("value", amount);
     }
     public static void clearAll(Context context) {
         context.getApplicationContext().getSharedPreferences(STORE, 0).edit().clear().commit();

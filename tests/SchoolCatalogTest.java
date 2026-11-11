@@ -29,8 +29,15 @@ public final class SchoolCatalogTest {
         check(SchoolCatalog.UG_KB_JSON.startsWith("https://jwxt.sit.edu.cn/jwglxt/kbcx/"),"Course JSON uses the observed menu path");
         check(SchoolCatalog.CARD_ENTRY.equals(SchoolCatalog.url("card",false)),"Recharge uses the observed official app SSO entry");
         check(SchoolCatalog.CARD_ENTRY.equals(SchoolCatalog.url("card",true)),"Recharge entry is shared by student types");
-        check(SchoolCatalog.url("code",false).endsWith("/epay/h5/v5qrcode"),"Payment code keeps its own entry");
-        check(SchoolCatalog.ELECTRICITY.equals(SchoolCatalog.url("electricity",false)),"Electricity entry is unchanged");
+        check(SchoolCatalog.QRCODE.equals(SchoolCatalog.url("code",false)),"Payment code uses the new eportal entry");
+        check(SchoolCatalog.QRCODE.endsWith("/epeortal/pages/h5/qrcode?id=qrcode"),"Payment code keeps its observed id parameter");
+        check(SchoolCatalog.isEcardPortal(SchoolCatalog.QRCODE),"Payment code stays inside the eportal");
+        check(!SchoolCatalog.isEcardPortalLogin(SchoolCatalog.QRCODE),"Payment code is not the portal login page");
+        check(SchoolCatalog.isEcardPortalLogin(SchoolCatalog.ECARD_PORTAL+"login"),"Portal login page is recognised");
+        check(!SchoolCatalog.isEcardPortalLogin(SchoolCatalog.CARD_HOME),"Legacy epay entry is not a portal login page");
+        check(SchoolCatalog.ELECTRICITY.equals(SchoolCatalog.url("electricity",false)),"Electricity entry follows the portal");
+        check(SchoolCatalog.isEcardPortal(SchoolCatalog.ELECTRICITY),"Electricity stays inside the eportal");
+        check(!SchoolCatalog.LEGACY_ELECTRICITY.equals(SchoolCatalog.ELECTRICITY),"Legacy epay entry is no longer used");
         check(SchoolCatalog.UG_EXAMS.equals(SchoolCatalog.url("exams",false)),"Exam schedule uses the observed module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("grades",false)),"Grades use the observed score module page");
         check(SchoolCatalog.UG_GRADES.equals(SchoolCatalog.url("gpa",false)),"GPA is derived from the same score module");

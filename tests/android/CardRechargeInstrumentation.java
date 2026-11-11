@@ -93,8 +93,8 @@ public final class CardRechargeInstrumentation extends Instrumentation {
                 check(!web.client.shouldOverrideUrlLoading(web,post(gateway)),"original payment navigation continues");
                 check(web.client.shouldInterceptRequest(web,post(gateway))==null,"original POST is passed to WebView without reading headers");
                 check(web.loads.isEmpty(),"gateway handoff never rebuilds a GET or resubmits payment");
-                set(SchoolWebActivity.class,activity,"service","electricity");
-                check(web.client.shouldInterceptRequest(web,post(gateway))!=null,"gateway exception is card-only");
+                set(SchoolWebActivity.class,activity,"service","code");
+                check(web.client.shouldInterceptRequest(web,post(gateway))!=null,"gateway exception excludes payment-code service");
                 set(SchoolWebActivity.class,activity,"service","card");
                 check(web.client.shouldInterceptRequest(web,post("https://openapi.alipay.com/other"))!=null,"other external POST stays blocked");
                 web.url=gateway;web.client.onPageStarted(web,gateway,null);
@@ -153,11 +153,38 @@ public final class CardRechargeInstrumentation extends Instrumentation {
             check(web.loads.size()==2,"payment callback after account change cannot navigate the new account");
             ui(()->call("offerCardRestart",new Class<?>[]{int.class},version));
             check(!(Boolean)field(SchoolWebActivity.class,activity,"cardExpired"),"old account callback cannot prompt recovery");
+            ui(()->{
+                set(SchoolWebActivity.class,activity,"service","electricity");
+                String charge=SchoolCatalog.ECARD_PORTAL+"elecCharge";
+                check(!web.client.shouldOverrideUrlLoading(web,post(SchoolCatalog.ELECTRICITY)),"electricity query opens");
+                check(!web.client.shouldOverrideUrlLoading(web,post(charge)),"electricity query loads the room result");
+                web.client.onPageStarted(web,charge,null);
+                check(web.getVisibility()==android.view.View.INVISIBLE,"query keeps the recharge form hidden");
+                activity.getIntent().putExtra("electricityRecharge",true);
+                check(!web.client.shouldOverrideUrlLoading(web,post(charge)),"explicit recharge can open the school recharge page");
+            });
+            new SchoolAccount(context).save(false,"SYNTHETIC_RECHARGE","",false);
+            ElectricityStore electricity=new ElectricityStore(context);
+            org.json.JSONObject first=new org.json.JSONObject()
+                .put("name","测试寝室").put("roomId","101").put("buildingId","2").put("value","0");
+            electricity.savePortalBalance(first,false);
+            check("0.00".equals(electricity.read().getJSONObject("balance").getString("value"))
+                &&"元".equals(electricity.read().getJSONObject("balance").getString("unit")),
+                "reported zero is a valid balance");
+            org.json.JSONObject second=new org.json.JSONObject(first.toString())
+                .put("name","另一寝室").put("roomId","102").put("value","84.77");
+            boolean mismatch=false;
+            try{electricity.savePortalBalance(second,false);}catch(IllegalStateException expected){mismatch=true;}
+            check(mismatch&&"101".equals(electricity.read().getJSONObject("portalRoom").getString("roomId")),
+                "refresh preserves the confirmed room when school returns a different one");
+            electricity.savePortalBalance(second,true);
+            check("84.77".equals(electricity.read().getJSONObject("balance").getString("value")),
+                "explicit selection replaces the room and balance together");
             report.putString("result","PASS: "+checks+" offline recharge assertions");
         }catch(Throwable e){result=Activity.RESULT_CANCELED;report.putString("failure",e.toString());}
         finally{
             if(activity!=null)try{ui(()->activity.finish());}catch(Exception ignored){}
-            if(owned){new SchoolAccount(context).clear();context.getSharedPreferences("school_profile",0).edit().clear().commit();}
+            if(owned){ElectricityStore.clearAll(context);new SchoolAccount(context).clear();context.getSharedPreferences("school_profile",0).edit().clear().commit();}
             finish(result,report);
         }
     }

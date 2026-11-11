@@ -18,6 +18,15 @@ import android.widget.*;
 public final class MainActivity extends Activity {
     static boolean paymentHostVisible;
     private final int ink=CampusUi.INK, muted=CampusUi.MUTED, teal=CampusUi.GREEN;
+    private static java.lang.ref.WeakReference<MainActivity> visibleMain = new java.lang.ref.WeakReference<>(null);
+    static void refreshSyncedData() {
+        MainActivity main = visibleMain.get();
+        if (main == null || main.isFinishing() || main.timetable == null || !AppSession.valid(main)) return;
+        main.tabViews[1] = null;
+        main.tabViews[2] = null;
+        main.timetable.resume();
+        if (main.selectedTab != 0) main.showHome();
+    }
     private LinearLayout content;
     private SharedPreferences prefs;
     private int selectedTab=0;
@@ -37,8 +46,8 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!AppSession.require(this))return;selectedTab=intent.getIntExtra("tab",0);if(timetable!=null)timetable.resume();showHome();showRequestedSettings();}
     @Override public void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putInt("tab",selectedTab);state.putString("avatarOwner",avatarOwner);if(timetable!=null)timetable.saveState(state);}
-    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;paymentHostVisible=true;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
-    @Override public void onPause(){paymentHostVisible=false;if(timetable!=null)timetable.pause();super.onPause();}
+    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;visibleMain=new java.lang.ref.WeakReference<>(this);paymentHostVisible=true;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
+    @Override public void onPause(){if(visibleMain.get()==this)visibleMain.clear();paymentHostVisible=false;if(timetable!=null)timetable.pause();super.onPause();}
     @Override public void onStop(){PaymentCodeWebView.clear();super.onStop();}
     @Override public void onTrimMemory(int level){if(level>=TRIM_MEMORY_RUNNING_LOW)PaymentCodeWebView.clear();super.onTrimMemory(level);}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==PICK_AVATAR){saveAvatar(result,data);return;}if(timetable!=null&&AppSession.valid(this))timetable.result(request,result,data);}

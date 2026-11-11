@@ -100,6 +100,11 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
                         boolean grade=url.contains("cjcx_cxXsgrcj");
                         boolean exam=url.contains("kscx_cxXsksxx");
                         String body="<!doctype html><meta charset='utf-8'><select id='xnm'><option selected value='2026'>2026</option></select><select id='xqm'><option selected value='3'>3</option></select>";
+                        if(SchoolCatalog.DEKT_SSO.equals(url))return new WebResourceResponse("text/html","UTF-8",new ByteArrayInputStream(
+                            ("<!doctype html><script>location.replace("+JSONObject.quote(CHECK)+")</script>").getBytes(StandardCharsets.UTF_8)));
+                        if(url.startsWith(SchoolCatalog.DEKT_HOME))body=html(mode);
+                        if(url.startsWith(SchoolCatalog.DEKT_HALL))body="<!doctype html><meta charset='utf-8'><button onclick=\"location.href='/apply-manage/xsrd'\">学分明细查询</button>";
+                        if(url.contains("/apply-manage/xsrd"))body="<!doctype html><meta charset='utf-8'><span>共 1 条</span><div>学分大类：德育 学分类别：SYNTHETIC_CATEGORY 活动名称：SYNTHETIC_NEW_RECORD 认定学分：0.1 创建时间：2026-11-01 12:00:00 学年：2026-2027</div>";
                         if(grade||exam)body="{\"items\":[],\"totalResult\":0,\"xsxx\":{\"XH\":\""+USER+"\"}}";
                         if(grade&&"grades-failed".equals(mode))return new WebResourceResponse("text/plain","UTF-8",500,"Synthetic failure",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
                         return new WebResourceResponse(grade||exam?"application/json":"text/html","UTF-8",new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
@@ -184,7 +189,7 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
             else call(school,"saveAcademic",new Class<?>[]{String.class,String.class},
                 new JSONObject().put("term",new JSONObject().put("xnm","2026").put("xqm","3")).put("student",new JSONObject().put("number",USER)).put("items",new JSONArray()).toString(),"exams");
         });
-        returned(monitor);check("3.50".equals(new DektStore(context).read().optString("earned")),"sync pipeline updates second-class credits");
+        returned(monitor);waitForBackgroundSchool(school);check("3.50".equals(new DektStore(context).read().optString("earned")),"sync pipeline updates second-class credits");
         check("SYNTHETIC_OLD_EXAMS".equals(new AcademicRepository(context).read("exams").optString("marker")),"failed or empty exams preserve the previous snapshot");
     }
     private void fullPipeline(boolean timetableFailure,boolean gradeFailure)throws Exception{
@@ -198,17 +203,27 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
         check(schoolReady,"synthetic academic document is ready");
         ActivityMonitor monitor=addMonitor(MainActivity.class.getName(),null,false);
         ui(()->{
-            set(school,"authenticationAccepted",true);
+            call(school,"acceptAuthentication",new Class<?>[]{});
             check(((android.view.View)field(school,"syncOverlay")).getVisibility()==android.view.View.VISIBLE,"academic page stays behind progress");
             if(timetableFailure)call(school,"offerManualImport",new Class<?>[]{String.class},"SYNTHETIC_TIMETABLE_FAILURE");
             else call(school,"saveAutomaticTimetable",new Class<?>[]{JSONObject.class},new JSONObject().put("semester","2026-2027-1").put("courses",new JSONArray()));
             check(((android.widget.TextView)field(school,"status")).getText().toString().contains("学分绩点"),"foreground task follows grade stage");
         });
         returned(monitor);
+        waitForBackgroundSchool(school);
         check(requests.stream().anyMatch(u->u.contains("cjcx_cxXsgrcj")),"pipeline queries grades");
         check(requests.stream().anyMatch(u->u.contains("kscx_cxXsksxx")),"pipeline queries exams after grade result");
         check("3.50".equals(new DektStore(context).read().optString("earned")),"pipeline includes second-class credits");
         check("SYNTHETIC_NEW_RECORD".equals(new DektRecordStore(context).read().getJSONArray("records").getJSONObject(0).optString("activity")),"pipeline includes records without manual entry");
+    }
+    private void waitForBackgroundSchool(SchoolWebActivity school)throws Exception {
+        for(int i=0;i<200;i++){
+            boolean[] done={false};
+            ui(()->done[0]=school.isFinishing()||school.isDestroyed());
+            if(done[0])return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("background school sync did not finish");
     }
     private void verificationRequired(boolean mobile)throws Exception{
         seed();mode="verification";stage("verification reveal and resume");DektActivity page=open();

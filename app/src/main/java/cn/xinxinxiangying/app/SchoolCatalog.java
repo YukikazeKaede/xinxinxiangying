@@ -11,7 +11,16 @@ public final class SchoolCatalog {
     public static final String PG_HOME = "https://yjsgl.sit.edu.cn/login/loginSso";
     public static final String CARD_HOME = "https://ecard.sit.edu.cn/epay/h5/index";
     public static final String CARD_ENTRY = "https://ecard.sit.edu.cn/openservice/sso/authForApp";
-    public static final String ELECTRICITY = "https://ecard.sit.edu.cn/epay/h5/payele";
+    /**
+     * 学校新版一卡通门户（epeortal，单页应用）。旧版 /epay/h5/* 在跳转统一认证时把 service
+     * 写成 https://x7ecard.sit.edu.cn:8081/epay/j_spring_cas_security_check，学校已对该应用
+     * 停止授权，登录后只会返回“未授权的访问”。新版门户走 openservice 的正式入口，仍可访问。
+     */
+    public static final String ECARD_PORTAL = "https://ecard.sit.edu.cn/epeortal/pages/h5/";
+    public static final String QRCODE = ECARD_PORTAL + "qrcode?id=qrcode";
+    public static final String ELECTRICITY = ECARD_PORTAL + "elecQuery";
+    /** 旧版电费页，只用于识别历史地址；入口已被统一认证拒绝。 */
+    public static final String LEGACY_ELECTRICITY = "https://ecard.sit.edu.cn/epay/h5/payele";
     public static final String PORTAL = "https://portal.sit.edu.cn";
     /** 学校菜单里的「学生课表查询（按周次）」页，登录后可直接打开（同源、无凭据）。 */
     public static final String UG_KB_ENTRY = "https://jwxt.sit.edu.cn/jwglxt/kbcx/xskbcxZccx_cxXSkbcxIndex.html?gnmkdm=N2154&layout=default";
@@ -56,6 +65,22 @@ public final class SchoolCatalog {
                 && uri.getRawUserInfo() == null && (uri.getPort() == -1 || uri.getPort() == 443);
         } catch (IllegalArgumentException e) { return false; }
     }
+    /** 新版一卡通门户页面（单页应用）；登录态由门户自己的 accessToken Cookie 决定。 */
+    public static boolean isEcardPortal(String url) {
+        if (!isSchoolUrl(url)) return false;
+        try {
+            URI uri = URI.create(url);
+            String path = uri.getPath();
+            return "ecard.sit.edu.cn".equalsIgnoreCase(uri.getHost())
+                && path != null && path.startsWith("/epeortal/");
+        } catch (IllegalArgumentException e) { return false; }
+    }
+    /** 门户自己的登录页；打开目标页时落在这里，说明还没有一卡通会话，需要先走 authForApp。 */
+    public static boolean isEcardPortalLogin(String url) {
+        if (!isEcardPortal(url)) return false;
+        String path = URI.create(url).getPath();
+        return path != null && path.startsWith("/epeortal/pages/h5/login");
+    }
     /** Exact observed H5 form target; this does not make Alipay a school origin. */
     public static boolean isCardPaymentGateway(String url) {
         try {
@@ -99,7 +124,7 @@ public final class SchoolCatalog {
         if ("grades".equals(id) || "gpa".equals(id)) return UG_GRADES;
         if ("second".equals(id)) return DEKT_HOME;
         if ("second_activities".equals(id)) return DEKT_ACTIVITIES;
-        if ("code".equals(id)) return "https://ecard.sit.edu.cn/epay/h5/v5qrcode";
+        if ("code".equals(id)) return QRCODE;
         if ("electricity".equals(id)) return ELECTRICITY;
         if ("card".equals(id)) return CARD_ENTRY;
         // Other services retain the original school homepage.
