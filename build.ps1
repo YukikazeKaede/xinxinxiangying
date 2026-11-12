@@ -1,7 +1,9 @@
 param(
     [string]$JavaHome = '',
     [string]$Keystore = '',
-    [string]$KeyAlias = 'xinxin'
+    [string]$KeyAlias = 'xinxin',
+    [ValidateSet('all', 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64')]
+    [string]$Abi = 'all'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -17,8 +19,23 @@ if (-not $JavaHome) {
     elseif ($env:JAVA_HOME) { $JavaHome = $env:JAVA_HOME }
 }
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
-    & $Program @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Program" }
+    # Windows PowerShell 5.1 turns native stderr (javac notes, d8 info) into a terminating error
+    # under ErrorActionPreference=Stop. Run through Process so only the exit code decides success.
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $Program
+    $info.Arguments = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.Encoding]::Default
+    $info.StandardErrorEncoding = [Text.Encoding]::Default
+    $process = [System.Diagnostics.Process]::Start($info)
+    $stdout = $process.StandardOutput.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEnd()
+    $process.WaitForExit()
+    if ($stdout) { Write-Host $stdout.TrimEnd() }
+    if ($stderr) { Write-Host $stderr.TrimEnd() }
+    if ($process.ExitCode -ne 0) { throw "Command failed ($($process.ExitCode)): $Program" }
 }
 function Write-AlignedZip([string]$InputPath, [string]$OutputPath) {
     # Preserve compressed bytes and CRCs, adding a valid private extra field
@@ -92,7 +109,8 @@ foreach ($required in @($androidJar, (Join-Path $tools 'aapt2.exe'), (Join-Path 
 $alipaySdk = & (Join-Path $project 'tools/get-alipay-sdk.ps1') -ProjectRoot $project
 # Second approved exception: a pinned on-device inference runtime for the captcha model.
 # Binaries only; no Gradle or Maven tooling. Keep this file pure ASCII (see CONTRIBUTING).
-$onnxRuntime = & (Join-Path $project 'tools/get-onnxruntime.ps1') -ProjectRoot $project
+$targetAbis = if ($Abi -eq 'all') { @('arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64') } else { @($Abi) }
+$onnxRuntime = & (Join-Path $project 'tools/get-onnxruntime.ps1') -ProjectRoot $project -Abis $targetAbis
 $classes = Join-Path $build 'classes'
 $dex = Join-Path $build 'dex'
 $generated = Join-Path $build 'generated'
@@ -102,7 +120,7 @@ foreach ($dir in @($build, $dist, $classes, $dex, $generated, $flat)) { New-Item
 foreach ($dir in @($classes, $dex, $generated, $flat)) {
     $resolved = [IO.Path]::GetFullPath($dir)
     if (-not $resolved.StartsWith([IO.Path]::GetFullPath($build) + [IO.Path]::DirectorySeparatorChar)) { throw 'Unsafe build cleanup path.' }
-    Get-ChildItem -LiteralPath $resolved -File -Recurse | Remove-Item -Force
+    Get-ChildItem -LiteralPath $resolved -File -Recurse | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 }
 $unsigned = Join-Path $build 'unsigned.apk'
 $aligned = Join-Path $build 'aligned.apk'
@@ -113,7 +131,6 @@ $manifestFile = Join-Path $project 'app/src/main/AndroidManifest.xml'
 $manifestText = [IO.File]::ReadAllText($manifestFile, [Text.Encoding]::UTF8)
 $version = [regex]::Match($manifestText, 'android:versionName="([^"]+)"').Groups[1].Value
 if (-not $version) { throw 'Cannot read versionName from AndroidManifest.xml.' }
-$output = Join-Path $dist ($appName + '-' + $version + '.apk')
 $resourceRoot = Join-Path $project 'app/src/main/res'
 # aapt2 must write the APK itself: it stores resources.arsc with ZIP method 0
 # (stored) and aligns it, which Android 11+ requires for targetSdk 30+.
@@ -150,19 +167,7 @@ try {
     foreach ($file in Get-ChildItem -LiteralPath $dex -Filter '*.dex' -File) {
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $file.Name, [IO.Compression.CompressionLevel]::Optimal) | Out-Null
     }
-    # aapt2 does not package native libraries, so they are injected here and then
-    # aligned by Write-AlignedZip below. Injecting after alignment would break
-    # the 4-byte rule that zipalign -c 4 checks.
-    foreach ($abi in $onnxRuntime.Abis) {
-        foreach ($library in @('libonnxruntime.so', 'libonnxruntime4j_jni.so')) {
-            $libraryPath = Join-Path (Join-Path $onnxRuntime.Root $abi) $library
-            if (-not (Test-Path -LiteralPath $libraryPath)) { throw "Missing native library: $libraryPath" }
-            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $libraryPath, ('lib/' + $abi + '/' + $library), [IO.Compression.CompressionLevel]::Optimal) | Out-Null
-        }
-    }
 } finally { $archive.Dispose() }
-Write-AlignedZip $unsigned $aligned
-Invoke-Checked (Join-Path $tools 'zipalign.exe') @('-c', '-v', '4', $aligned)
 # Signing material is never part of the repository. Supply it either with
 # -Keystore / XINXIN_KEYSTORE, or keep a private key at _private/signing/.
 if ($Keystore) { $keystore = $Keystore }
@@ -174,9 +179,27 @@ if (-not (Test-Path -LiteralPath $keystore)) {
 if (-not $env:XINXIN_KEYSTORE_PASSWORD) {
     throw 'Set XINXIN_KEYSTORE_PASSWORD to the keystore/key password before building.'
 }
-Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') @('-jar', (Join-Path $tools 'lib/apksigner.jar'), 'sign', '--ks', $keystore, '--ks-key-alias', $KeyAlias, '--ks-pass', 'env:XINXIN_KEYSTORE_PASSWORD', '--key-pass', 'env:XINXIN_KEYSTORE_PASSWORD', '--out', $output, $aligned)
-Invoke-Checked (Join-Path $tools 'zipalign.exe') @('-c', '-v', '4', $output)
-Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') @('-jar', (Join-Path $tools 'lib/apksigner.jar'), 'verify', '--verbose', '--print-certs', $output)
-Get-FileHash -LiteralPath $output -Algorithm SHA256
-Write-Host "Built: $output"
+# Compile Java/resources once, then inject exactly one ABI into each package.
+$basePackage = $unsigned
+foreach ($targetAbi in $targetAbis) {
+    $unsigned = Join-Path $build ('unsigned-' + $targetAbi + '.apk')
+    $aligned = Join-Path $build ('aligned-' + $targetAbi + '.apk')
+    $output = Join-Path $dist ($appName + '-' + $version + '-' + $targetAbi + '.apk')
+    Copy-Item -LiteralPath $basePackage -Destination $unsigned -Force
+    $archive = [IO.Compression.ZipFile]::Open($unsigned, [IO.Compression.ZipArchiveMode]::Update)
+    try {
+        foreach ($library in @('libonnxruntime.so', 'libonnxruntime4j_jni.so')) {
+            $libraryPath = Join-Path (Join-Path $onnxRuntime.Root $targetAbi) $library
+            if (-not (Test-Path -LiteralPath $libraryPath)) { throw "Missing native library: $libraryPath" }
+            [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $libraryPath, ('lib/' + $targetAbi + '/' + $library), [IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    } finally { $archive.Dispose() }
+    Write-AlignedZip $unsigned $aligned
+    Invoke-Checked (Join-Path $tools 'zipalign.exe') @('-c', '-v', '4', $aligned)
+    Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') @('-jar', (Join-Path $tools 'lib/apksigner.jar'), 'sign', '--ks', $keystore, '--ks-key-alias', $KeyAlias, '--ks-pass', 'env:XINXIN_KEYSTORE_PASSWORD', '--key-pass', 'env:XINXIN_KEYSTORE_PASSWORD', '--out', $output, $aligned)
+    Invoke-Checked (Join-Path $tools 'zipalign.exe') @('-c', '-v', '4', $output)
+    Invoke-Checked (Join-Path $JavaHome 'bin/java.exe') @('-jar', (Join-Path $tools 'lib/apksigner.jar'), 'verify', '--verbose', '--print-certs', $output)
+    Get-FileHash -LiteralPath $output -Algorithm SHA256
+    Write-Host "Built: $output"
+}
 exit 0

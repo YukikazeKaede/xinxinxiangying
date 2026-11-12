@@ -24,7 +24,7 @@
 - 包名 cn.xinxinxiangying.app；minSdk 24，targetSdk 36；javac 用 -source 8 -target 8。
 - 原生 Java + 内嵌 assets JS。第三方运行时依赖只有白名单里的两个：支付宝官方 `com.alipay.sdk:alipaysdk-android:15.8.42`（校园卡 H5 转原生支付，缓存在 `toolchain/alipay/`，不入库）与 `com.microsoft.onnxruntime:onnxruntime-android:1.31.1`（端侧验证码识别，缓存在 `toolchain/onnxruntime/`，不入库）。随包资产另含 `app/src/main/assets/ocr/`：验证码模型 `captcha.onnx`、字符表 `charset.json`、12 张自检样本 `selftest/`，**属于必须入库的运行时资产**。不用 Gradle，构建脚本是 build.ps1（aapt2 compile/link → javac → d8 → 对齐 → apksigner 签名校验）。
 - 版本号唯一来源：app/src/main/AndroidManifest.xml 的 android:versionCode / android:versionName。
-- 本地产物：dist/心心相应-<versionName>.apk；发布资产名固定 xinxin_<versionName>.apk。
+- 本地产物：dist/心心相应-<versionName>-<abi>.apk；四种架构独立打包，发布资产名 xinxin_<versionName>-<abi>.apk；多架构更新清单按 docs/UPDATES.md 生成。
 - 应用内更新清单地址：https://github.com/YukikazeKaede/xinxinxiangying/releases/latest/download/update.json
 - 相关文档：README.md、docs/BUILD.md、docs/UPDATES.md、docs/PRIVACY.md、docs/CHANGELOG.md、docs/OPEN_SOURCE.md、CONTRIBUTING.md。
 - 团队规范以 CONTRIBUTING.md 为准；若与我的说法冲突，指出冲突并按 CONTRIBUTING.md 执行。

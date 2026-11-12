@@ -18,6 +18,15 @@ import android.widget.*;
 public final class MainActivity extends Activity {
     static boolean paymentHostVisible;
     private final int ink=CampusUi.INK, muted=CampusUi.MUTED, teal=CampusUi.GREEN;
+    private static java.lang.ref.WeakReference<MainActivity> visibleMain = new java.lang.ref.WeakReference<>(null);
+    static void refreshSyncedData() {
+        MainActivity main = visibleMain.get();
+        if (main == null || main.isFinishing() || main.timetable == null || !AppSession.valid(main)) return;
+        main.tabViews[1] = null;
+        main.tabViews[2] = null;
+        main.timetable.resume();
+        if (main.selectedTab != 0) main.showHome();
+    }
     private LinearLayout content;
     private SharedPreferences prefs;
     private int selectedTab=0;
@@ -30,25 +39,27 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state){
         super.onCreate(state);CampusUi.window(this);
         if(!AppSession.require(this))return;
-        prefs=getSharedPreferences("school_profile",MODE_PRIVATE);selectedTab=state!=null?state.getInt("tab",0):getIntent().getIntExtra("tab",0);
+        prefs=getSharedPreferences("school_profile",MODE_PRIVATE);
+        selectedTab=state!=null?state.getInt("tab",0):getIntent().getIntExtra("tab",prefs.getInt("last_tab",0));
         if(state!=null)avatarOwner=state.getString("avatarOwner","");
         shell=CampusUi.column(this);shell.setBackgroundColor(CampusUi.BG);CampusUi.insets(shell);pages=new FrameLayout(this);shell.addView(pages,new LinearLayout.LayoutParams(-1,0,1));navHost=CampusUi.column(this);shell.addView(navHost);setContentView(shell);
         timetable=new TimetableScreen(this,state,view->{tabViews[0]=view;if(selectedTab==0)showHome();});
     }
-    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!AppSession.require(this))return;selectedTab=intent.getIntExtra("tab",0);if(timetable!=null)timetable.resume();showHome();showRequestedSettings();}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(!AppSession.require(this))return;selectedTab=intent.getIntExtra("tab",selectedTab);if(timetable!=null)timetable.resume();showHome();showRequestedSettings();}
     @Override public void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);state.putInt("tab",selectedTab);state.putString("avatarOwner",avatarOwner);if(timetable!=null)timetable.saveState(state);}
-    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;paymentHostVisible=true;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
-    @Override public void onPause(){paymentHostVisible=false;if(timetable!=null)timetable.pause();super.onPause();}
+    @Override public void onResume(){super.onResume();if(isFinishing()||timetable==null)return;if(!AppSession.require(this))return;visibleMain=new java.lang.ref.WeakReference<>(this);paymentHostVisible=true;tabViews[1]=null;tabViews[2]=null;timetable.resume();showHome();showRequestedSettings();if(!UpdateChecker.resumeInstall(this))UpdateChecker.autoCheck(this);}
+    @Override public void onPause(){if(visibleMain.get()==this)visibleMain.clear();paymentHostVisible=false;if(timetable!=null)timetable.pause();super.onPause();}
     @Override public void onStop(){PaymentCodeWebView.clear();super.onStop();}
     @Override public void onTrimMemory(int level){if(level>=TRIM_MEMORY_RUNNING_LOW)PaymentCodeWebView.clear();super.onTrimMemory(level);}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==PICK_AVATAR){saveAvatar(result,data);return;}if(timetable!=null&&AppSession.valid(this))timetable.result(request,result,data);}
-    @Override public void onBackPressed(){if(selectedTab!=0){selectTab(0);return;}super.onBackPressed();}
+    @Override public void onBackPressed(){super.onBackPressed();}
     private void showRequestedSettings(){if(timetable!=null&&getIntent().getBooleanExtra("showSettings",false)){getIntent().removeExtra("showSettings");timetable.showSettings();}}
     public void selectTab(int tab){if(!AppSession.require(this))return;if(tab<0||tab>2)return;if(tab==1)tabViews[1]=null;selectedTab=tab;showHome();}
     private void gap(int h){content.addView(new View(this),new LinearLayout.LayoutParams(1,dp(h)));}
     private void showHome(){
         if(pages==null||!AppSession.valid(this))return;
         if(selectedTab<0||selectedTab>2)selectedTab=0;
+        prefs.edit().putInt("last_tab",selectedTab).apply();
         if(tabViews[selectedTab]==null&&selectedTab!=0){ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);content=CampusUi.column(this);content.setPadding(0,0,0,dp(20));content.setBackground(selectedTab==2?CampusUi.wash(true):CampusUi.shape(this,CampusUi.BG,0));scroll.addView(content);if(selectedTab==2)showProfile();else showCampus();tabViews[selectedTab]=scroll;}
         View current=tabViews[selectedTab];if(current!=null){pages.removeAllViews();if(current.getParent()!=null)((android.view.ViewGroup)current.getParent()).removeView(current);pages.addView(current,new FrameLayout.LayoutParams(-1,-1));}
         navHost.removeAllViews();navHost.addView(CampusUi.navigation(this,selectedTab));
@@ -72,7 +83,7 @@ public final class MainActivity extends Activity {
         String summary;try{summary=campusSummary(new TimetableRepository(this).read(),today);}catch(RuntimeException e){summary="课表暂无法读取，请重新同步";}
         caption.addView(text(summary,14,Color.WHITE));banner.addView(caption,new FrameLayout.LayoutParams(-1,-1));content.addView(banner,new LinearLayout.LayoutParams(-1,dp(152)));gap(16);
         LinearLayout statistics=toolPanel();statistics.setOrientation(LinearLayout.HORIZONTAL);statistics.setPadding(dp(8),dp(14),dp(8),dp(14));
-        org.json.JSONObject grades=new AcademicRepository(this).read("grades"), second=new DektStore(this).read();
+        org.json.JSONObject grades=new AcademicRepository(this).readAllGrades(), second=new DektStore(this).read();
         statistic(statistics,AcademicParser.overallGpa(grades),"平均绩点",v->openService("gpa"));
         statistic(statistics,second==null?"":second.optString("earned"),"第二课堂",v->openService("second"));gap(16);
         LinearLayout services=toolPanel();services.setPadding(dp(6),dp(14),dp(6),dp(14));

@@ -18,6 +18,7 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
     private final List<Activity> pages=new ArrayList<>();
     private final List<String> requests=Collections.synchronizedList(new ArrayList<>());
     private final Map<Activity,WebViewClient> clients=new HashMap<>();
+    private final Map<Activity,Boolean> quietObserved=Collections.synchronizedMap(new HashMap<>());
     private String mode="success";
     private String only="";
     private volatile boolean schoolReady;
@@ -48,16 +49,30 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){
                 String url=r.getUrl().toString();requests.add(url);
                 boolean bad=CHECK.equals(url)&&("fallback".equals(fixtureMode)||"unavailable".equals(fixtureMode))
-                    ||SchoolCatalog.DEKT_HOME.equals(url)&&"unavailable".equals(fixtureMode);
+                    ||SchoolCatalog.DEKT_HOME.equals(url)&&"unavailable".equals(fixtureMode)
+                    ||url.contains("/apply-manage/xsrd")&&"records-http".equals(fixtureMode);
                 String body=html(fixtureMode);
-                if(url.contains("/login")&&"verification".equals(fixtureMode))body="<!doctype html><meta charset='utf-8'><form action='/authserver/login'><input id='username'><input id='password' type='password'><input id='captchaResponse'><button type='submit'>验证</button></form>";
+                if(url.contains("/login")&&("verification".equals(fixtureMode)||"records-login".equals(fixtureMode)))body="<!doctype html><meta charset='utf-8'><form action='/authserver/login'><input id='username'><input id='password' type='password'><input id='captchaResponse'><button type='submit'>验证</button></form>";
                 if(url.contains("/service/fwdt"))body="<!doctype html><meta charset='utf-8'><button onclick=\"location.href='/apply-manage/xsrd'\">学分明细查询</button>";
                 else if(url.contains("/apply-manage/xsrd"))body="<!doctype html><meta charset='utf-8'><span>共 "+("records-failed".equals(fixtureMode)?"2":"1")+" 条</span>"
                     +"<div>学分大类：德育 学分类别：SYNTHETIC_CATEGORY 活动名称：SYNTHETIC_NEW_RECORD 认定学分：0.1 创建时间：2026-11-01 12:00:00 学年：2026-2027</div>";
+                if(url.contains("/service/fwdt")&&"records-login".equals(fixtureMode))
+                    body="<!doctype html><script>location.replace('https://xg.sit.edu.cn/zftal-xgxt-web/login')</script>";
                 return new WebResourceResponse("text/html","UTF-8",bad?404:200,bad?"Synthetic missing":"OK",Collections.emptyMap(),
                     new ByteArrayInputStream((bad?"SYNTHETIC_404":body).getBytes(StandardCharsets.UTF_8)));
             }
-            @Override public void onPageStarted(WebView v,String u,android.graphics.Bitmap b){requests.add("START "+u);real.onPageStarted(v,u,b);}
+            @Override public void onPageStarted(WebView v,String u,android.graphics.Bitmap b){
+                requests.add("START "+u);real.onPageStarted(v,u,b);
+                try{
+                    if((Boolean)field(activity,"recordsInBackground")&&!quietObserved.containsKey(activity)){
+                        android.view.View nativePage=(android.view.View)field(activity,"page");
+                        android.view.ViewGroup host=(android.view.ViewGroup)nativePage.getParent();
+                        quietObserved.put(activity,nativePage.isShown()&&host.getChildAt(host.getChildCount()-1)==nativePage
+                            &&((android.view.View)field(activity,"webPage")).getImportantForAccessibility()==android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                            &&((android.widget.TextView)field(activity,"status")).getText().toString().contains("后台"));
+                    }
+                }catch(Exception e){throw new RuntimeException(e);}
+            }
             @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse response){
                 requests.add("HTTP "+response.getStatusCode()+" "+r.getUrl()+" current="+v.getUrl());
                 real.onReceivedHttpError(v,r,response);
@@ -89,6 +104,7 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
     @Override public void callActivityOnCreate(Activity activity,Bundle state){
         super.callActivityOnCreate(activity,state);pages.add(activity);
         try{
+            if(activity instanceof MainActivity)set(activity,"paymentPreloadAttempted",true);
             if(activity instanceof DektActivity){
                 ((Handler)field(activity,"handler")).removeCallbacksAndMessages(null);
                 call(activity,"importPage",new Class<?>[]{});intercept(activity);
@@ -100,6 +116,11 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
                         boolean grade=url.contains("cjcx_cxXsgrcj");
                         boolean exam=url.contains("kscx_cxXsksxx");
                         String body="<!doctype html><meta charset='utf-8'><select id='xnm'><option selected value='2026'>2026</option></select><select id='xqm'><option selected value='3'>3</option></select>";
+                        if(SchoolCatalog.DEKT_SSO.equals(url))return new WebResourceResponse("text/html","UTF-8",new ByteArrayInputStream(
+                            ("<!doctype html><script>location.replace("+JSONObject.quote(CHECK)+")</script>").getBytes(StandardCharsets.UTF_8)));
+                        if(url.startsWith(SchoolCatalog.DEKT_HOME))body=html(mode);
+                        if(url.startsWith(SchoolCatalog.DEKT_HALL))body="<!doctype html><meta charset='utf-8'><button onclick=\"location.href='/apply-manage/xsrd'\">学分明细查询</button>";
+                        if(url.contains("/apply-manage/xsrd"))body="<!doctype html><meta charset='utf-8'><span>共 1 条</span><div>学分大类：德育 学分类别：SYNTHETIC_CATEGORY 活动名称：SYNTHETIC_NEW_RECORD 认定学分：0.1 创建时间：2026-11-01 12:00:00 学年：2026-2027</div>";
                         if(grade||exam)body="{\"items\":[],\"totalResult\":0,\"xsxx\":{\"XH\":\""+USER+"\"}}";
                         if(grade&&"grades-failed".equals(mode))return new WebResourceResponse("text/plain","UTF-8",500,"Synthetic failure",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));
                         return new WebResourceResponse(grade||exam?"application/json":"text/html","UTF-8",new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
@@ -114,10 +135,11 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
     private void close()throws Exception{
         ui(()->{for(Activity a:new ArrayList<>(pages))if(!a.isFinishing())a.finish();});
         for(int i=0;i<100;i++){boolean[] done={true};ui(()->{for(Activity a:pages)if(!a.isDestroyed())done[0]=false;});if(done[0])break;SystemClock.sleep(50);}
-        pages.clear();clients.clear();SchoolSession.endReauth(context);
+        pages.clear();clients.clear();quietObserved.clear();SchoolSession.endReauth(context);
     }
     private void seed()throws Exception{
         close();requests.clear();ui(()->{
+            context.getSharedPreferences("app_update",0).edit().putLong("last_check",System.currentTimeMillis()).commit();
             new SchoolAccount(context).clear();context.getSharedPreferences("school_profile",0).edit().putBoolean("postgraduate",false).commit();
             new SchoolAccount(context).save(false,USER,"",false);
             call(AppSession.class,"verified",new Class<?>[]{Context.class,boolean.class,String.class},context,false,USER);
@@ -184,7 +206,7 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
             else call(school,"saveAcademic",new Class<?>[]{String.class,String.class},
                 new JSONObject().put("term",new JSONObject().put("xnm","2026").put("xqm","3")).put("student",new JSONObject().put("number",USER)).put("items",new JSONArray()).toString(),"exams");
         });
-        returned(monitor);check("3.50".equals(new DektStore(context).read().optString("earned")),"sync pipeline updates second-class credits");
+        returned(monitor);waitForBackgroundSchool(school);check("3.50".equals(new DektStore(context).read().optString("earned")),"sync pipeline updates second-class credits");
         check("SYNTHETIC_OLD_EXAMS".equals(new AcademicRepository(context).read("exams").optString("marker")),"failed or empty exams preserve the previous snapshot");
     }
     private void fullPipeline(boolean timetableFailure,boolean gradeFailure)throws Exception{
@@ -198,17 +220,27 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
         check(schoolReady,"synthetic academic document is ready");
         ActivityMonitor monitor=addMonitor(MainActivity.class.getName(),null,false);
         ui(()->{
-            set(school,"authenticationAccepted",true);
+            call(school,"acceptAuthentication",new Class<?>[]{});
             check(((android.view.View)field(school,"syncOverlay")).getVisibility()==android.view.View.VISIBLE,"academic page stays behind progress");
             if(timetableFailure)call(school,"offerManualImport",new Class<?>[]{String.class},"SYNTHETIC_TIMETABLE_FAILURE");
             else call(school,"saveAutomaticTimetable",new Class<?>[]{JSONObject.class},new JSONObject().put("semester","2026-2027-1").put("courses",new JSONArray()));
             check(((android.widget.TextView)field(school,"status")).getText().toString().contains("学分绩点"),"foreground task follows grade stage");
         });
         returned(monitor);
+        waitForBackgroundSchool(school);
         check(requests.stream().anyMatch(u->u.contains("cjcx_cxXsgrcj")),"pipeline queries grades");
         check(requests.stream().anyMatch(u->u.contains("kscx_cxXsksxx")),"pipeline queries exams after grade result");
         check("3.50".equals(new DektStore(context).read().optString("earned")),"pipeline includes second-class credits");
         check("SYNTHETIC_NEW_RECORD".equals(new DektRecordStore(context).read().getJSONArray("records").getJSONObject(0).optString("activity")),"pipeline includes records without manual entry");
+    }
+    private void waitForBackgroundSchool(SchoolWebActivity school)throws Exception {
+        for(int i=0;i<200;i++){
+            boolean[] done={false};
+            ui(()->done[0]=school.isFinishing()||school.isDestroyed());
+            if(done[0])return;
+            SystemClock.sleep(100);
+        }
+        throw new AssertionError("background school sync did not finish");
     }
     private void verificationRequired(boolean mobile)throws Exception{
         seed();mode="verification";stage("verification reveal and resume");DektActivity page=open();
@@ -236,22 +268,60 @@ public final class SecondClassSyncInstrumentation extends Instrumentation {
             check(((android.widget.TextView)field(school,"status")).getText().toString().contains("SYNTHETIC_QUERY_FAILURE"),"single academic failure shows native task result");});
         close();
     }
-    private void manualBackgroundRead()throws Exception{
-        seed();mode="success";stage("manual second-class read stays behind task overlay");
+    private DektActivity manualRecordsStarted(String kind)throws Exception{
+        seed();mode=kind;stage("credits then nonblocking records: "+kind);
         DektActivity page=(DektActivity)startActivitySync(new Intent(context,DektActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_MULTIPLE_TASK));
+        for(int i=0;i<150&&!quietObserved.containsKey(page);i++)SystemClock.sleep(100);
+        check(quietObserved.containsKey(page)&&!page.isFinishing(),"credits automatically start the record reader");
+        check(Boolean.TRUE.equals(quietObserved.get(page)),"native credits stay in front and the reader cannot take accessibility focus");
+        check("3.50".equals(new DektStore(context).read().optString("earned")),"credits are already saved before records finish");
+        if((Boolean)field(page,"recordsInBackground"))
+            check("SYNTHETIC_OLD_RECORD".equals(new DektRecordStore(context).read().getJSONArray("records").getJSONObject(0).optString("activity")),"old records remain available while reading");
+        return page;
+    }
+    private void manualBackgroundRead()throws Exception{manualBackgroundRead("success",true);}
+    private void manualBackgroundRead(String kind,boolean success)throws Exception{
+        DektActivity page=manualRecordsStarted(kind);
+        if(success){
+            SystemClock.sleep(300);android.graphics.Bitmap image=getUiAutomation().takeScreenshot();
+            check(image!=null,"default credit page permits a screenshot while records read");
+            try(OutputStream output=new FileOutputStream(new File(context.getExternalFilesDir(null),"SYNTHETIC-background-records.png"))){image.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output);}image.recycle();
+        }
         boolean[] done={false};
-        for(int i=0;i<150&&!done[0];i++){
+        for(int i=0;i<200&&!done[0];i++){
             ui(()->done[0]=!(Boolean)field(page,"importing"));if(!done[0])SystemClock.sleep(100);
         }
-        check(done[0]&&!page.isFinishing(),"manual read returns to the native second-class screen");
-        check("3.50".equals(new DektStore(context).read().optString("earned")),"manual background read saves credits");
+        check(done[0]&&!page.isFinishing(),"record result keeps the native credit page open");
+        check(requests.contains(SchoolCatalog.DEKT_HALL),"record hall opens without another tap");
+        check("3.50".equals(new DektStore(context).read().optString("earned")),"record failures do not revert fresh credits");
+        String activity=new DektRecordStore(context).read().getJSONArray("records").getJSONObject(0).optString("activity");
+        check((success?"SYNTHETIC_NEW_RECORD":"SYNTHETIC_OLD_RECORD").equals(activity),"only a complete record response replaces the old snapshot");
+        check(!pages.stream().anyMatch(p->p instanceof MainActivity),"background completion does not navigate to the home page");
+        if("records-login".equals(kind)){
+            check(AppSession.valid(context),"record verification keeps the local account");
+            check(((android.widget.TextView)field(page,"status")).getText().toString().contains("验证"),"manual verification is offered without taking the foreground");
+        }
+        close();
+    }
+    private void manualBackgroundCancel()throws Exception{
+        DektActivity page=manualRecordsStarted("success");
+        int token=(Integer)field(page,"generation");
+        ui(page::onBackPressed);
+        check(page.isFinishing(),"back leaves immediately while background records are pending");
+        JSONObject stale=new JSONObject().put("status","complete").put("total",1).put("records",new JSONArray()
+            .put(new JSONObject().put("activity","SYNTHETIC_STALE_RECORD").put("credit","9")));
+        ui(()->call(page,"save",new Class<?>[]{JSONObject.class,int.class},stale,token));
+        check("SYNTHETIC_OLD_RECORD".equals(new DektRecordStore(context).read().getJSONArray("records").getJSONObject(0).optString("activity")),"an exited page cannot save a late record response");
         close();
     }
     @Override public void onStart(){context=getTargetContext();Bundle report=new Bundle();boolean owned=false;try{
-        check(context.getPackageName().endsWith(".sessiontest")||context.getPackageName().endsWith(".pr23test"),"independent test application only");
+        boolean freshManual="manual".equals(only)&&"cn.xinxinxiangying.app".equals(context.getPackageName())
+            &&new SchoolAccount(context).username(false).isEmpty()&&new SchoolAccount(context).username(true).isEmpty();
+        check(freshManual||context.getPackageName().endsWith(".sessiontest")||context.getPackageName().endsWith(".pr23test"),"empty manual fixture or independent test application only");
         String user=new SchoolAccount(context).username(false);check(user.isEmpty()||user.startsWith("SYNTHETIC_"),"synthetic account only");
         owned=true;
-        if("full".equals(only)){fullPipeline(false,false);fullPipeline(true,true);direct("records-failed",true);verificationRequired(false);verificationRequired(true);singleAcademicFailure();manualAndStale();manualBackgroundRead();}
+        if("manual".equals(only)){manualBackgroundRead();manualBackgroundRead("records-failed",false);manualBackgroundRead("records-http",false);manualBackgroundRead("records-login",false);manualBackgroundCancel();}
+        else if("full".equals(only)){fullPipeline(false,false);fullPipeline(true,true);direct("records-failed",true);verificationRequired(false);verificationRequired(true);singleAcademicFailure();manualAndStale();manualBackgroundRead();}
         else if("fallback".equals(only))direct("fallback",true);
         else{direct("success",true);direct("fallback",true);direct("empty",false);direct("unavailable",false);
             manualAndStale();pipeline(false);pipeline(true);}

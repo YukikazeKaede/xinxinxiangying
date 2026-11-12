@@ -1,8 +1,30 @@
 {
   "versionCode": 15,
   "versionName": "0.6.9",
-  "url": "https://github.com/OWNER/REPO/releases/latest/download/xinxin_0.6.9.apk",
+  "url": "https://example.invalid/xinxin_0.6.9-arm64-v8a.apk",
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "size": 128330,
-  "notes": "1. 新增或修复的内容写在这里。\n2. 每行一条，弹窗会原样显示。"
+  "notes": "1. 新增或修复的内容写在这里。\n2. 每行一条，弹窗会原样显示。",
+  "artifacts": {
+    "arm64-v8a": {
+      "url": "https://example.invalid/xinxin_0.6.9-arm64-v8a.apk",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "size": 128330
+    },
+    "armeabi-v7a": {
+      "url": "https://example.invalid/xinxin_0.6.9-armeabi-v7a.apk",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "size": 128330
+    },
+    "x86": {
+      "url": "https://example.invalid/xinxin_0.6.9-x86.apk",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "size": 128330
+    },
+    "x86_64": {
+      "url": "https://example.invalid/xinxin_0.6.9-x86_64.apk",
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "size": 128330
+    }
+  }
 }

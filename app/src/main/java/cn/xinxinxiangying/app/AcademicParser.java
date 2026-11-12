@@ -63,9 +63,13 @@ public final class AcademicParser {
     }
     /** 单学期缓存不能冒充全部学期平均值。旧缓存仍可查看，但需刷新后显示总绩点。 */
     public static String overallGpa(JSONObject saved){
-        JSONObject term=saved==null?null:saved.optJSONObject("term"), summary=saved==null?null:saved.optJSONObject("summary");
-        return term!=null&&"全部学期".equals(term.optString("label"))&&term.optString("xnm").isEmpty()
-            &&term.optString("xqm").isEmpty()&&summary!=null?summary.optString("gpa",""):"";
+        JSONObject summary=saved==null?null:saved.optJSONObject("summary");
+        return isAllTerms(saved)&&summary!=null?summary.optString("gpa",""):"";
+    }
+    public static boolean isAllTerms(JSONObject saved){
+        JSONObject term=saved==null?null:saved.optJSONObject("term");
+        return term!=null&&"全部学期".equals(term.optString("label"))
+            &&term.optString("xnm").isEmpty()&&term.optString("xqm").isEmpty();
     }
 
     private static JSONObject grade(JSONObject row)throws Exception{

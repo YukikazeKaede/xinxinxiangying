@@ -118,9 +118,9 @@ chore/<主题>    构建、脚本   chore/build-ascii
 4. 构建并验证：`.\build.ps1` → 在旧版本设备上实测覆盖安装。
 5. 建 GitHub Release，tag 用 `v<versionName>`（如 `v0.6.9`），标题「<versionName> <一句话>」。
 6. 上传资产，文件名固定：
-   - `xinxin_<versionName>.apk`
+   - `xinxin_<versionName>-<abi>.apk`（四种架构各一包，见 docs/UPDATES.md）
    - `update.json`
-7. 用脚本生成清单，不要手写：
+7. 用脚本生成清单，不要手写；四架构发布使用 docs/UPDATES.md 的 `-AllAbis` 命令。以下为历史单包模式：
 
 ```powershell
 .\tools\make-update-json.ps1 `

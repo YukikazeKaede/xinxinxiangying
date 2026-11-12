@@ -56,6 +56,9 @@ public final class SchoolWebActivity extends Activity {
     private String lastQueryState="";
     private String academicService;
     private boolean syncAll;
+    private boolean mainPreviewed, portalEntryPending;
+    private int secondStage;
+    private boolean secondReading, secondOpened;
     private boolean secondSyncStarted, syncIncomplete;
     private boolean electricityRoomRestored;
     private String syncStage;
@@ -79,7 +82,12 @@ public final class SchoolWebActivity extends Activity {
     private String captchaImage="";
     private String captchaScript="";
     private void log(String message){ if(!debuggable) return; android.util.Log.i("xinxinsync",message); }
-    private Button importButton;
+    private Button importButton, confirmElectricityRoom;
+    private int electricityRead;
+    private boolean electricitySsoAttempted;
+    private org.json.JSONObject electricityRoom;
+    private org.json.JSONObject electricityMatch;
+    private ElectricityStore electricityStore;
     private int dp(int v) { return (int)(getResources().getDisplayMetrics().density*v+.5f); }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -137,6 +145,14 @@ public final class SchoolWebActivity extends Activity {
             importButton=CampusUi.button(this,autoSync?"手动导入":"导入",true,v->manualImport());bar.addView(importButton,new LinearLayout.LayoutParams(-2,dp(44)));
             if(autoSync)importButton.setVisibility(View.GONE);
         }
+        if(isElectricityQuery()){
+            electricityStore=new ElectricityStore(this);
+            if(choosesElectricityRoom()){
+                confirmElectricityRoom=CampusUi.button(this,"使用此宿舍",true,v->savePortalElectricity(electricityRoom));
+                confirmElectricityRoom.setVisibility(View.GONE);
+                bar.addView(confirmElectricityRoom,new LinearLayout.LayoutParams(-2,dp(44)));
+            }
+        }
         LinearLayout more=new LinearLayout(this);more.setGravity(android.view.Gravity.CENTER);more.setBackground(CampusUi.ripple(this,android.graphics.Color.WHITE,6));more.addView(new CampusUi.Icon(this,"more",CampusUi.GREEN),new LinearLayout.LayoutParams(dp(22),dp(22)));more.setContentDescription("更多");more.setFocusable(true);more.setOnClickListener(v->showMenu());bar.addView(more,new LinearLayout.LayoutParams(dp(44),dp(44)));root.addView(bar);
         if(autoSync)more.setOnClickListener(v->showCaptchaSettings());
         status=CampusUi.text(this,"正在验证学校账号…",11,CampusUi.MUTED);status.setPadding(dp(20),dp(2),dp(20),dp(10));status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);if(!autoSync)root.addView(status);
@@ -166,6 +182,16 @@ public final class SchoolWebActivity extends Activity {
             }
         });
         web.setWebViewClient(new WebViewClient(){
+            @Override public void doUpdateVisitedHistory(WebView view,String url,boolean reload) {
+                if(view!=web)return;
+                updateElectricityPage(view,url);
+                if(secondStage!=2)return;
+                autoHandler.postDelayed(()->{
+                    if(secondStage==2&&web==view&&url.equals(view.getUrl())&&!isFinishing())
+                        advanceBackgroundSecond(url);
+                },1000);
+            }
+
             @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request) {
                 if(request.isForMainFrame()&&!isAllowedMainUrl(request.getUrl().toString())) {
                     // Leave the observed payment POST to WebView: replacing it with loadUrl would discard its body.
@@ -189,29 +215,63 @@ public final class SchoolWebActivity extends Activity {
                 navigationFailed=false;pageVersion++;
                 captchaBusyVersion=-1;captchaImage="";
                 if(!SessionPolicy.isAuthHost(Uri.parse(url).getHost()))manualLoginSubmitted=false;
+                if(isElectricityQuery()){
+                    electricityRead++;
+                    electricityRoom=null;
+                    if(confirmElectricityRoom!=null)confirmElectricityRoom.setVisibility(View.GONE);
+                    if(isElectricityRechargePage(url))view.setVisibility(View.INVISIBLE);
+                }
                 log("start "+pageVersion+" "+safeUrl(url));
                 boolean allowed=isAllowedMainUrl(url);
-                cardGatewayAllowed="card".equals(service)&&(SchoolCatalog.isSchoolUrl(url)&&"ecard.sit.edu.cn".equals(Uri.parse(url).getHost())
+                cardGatewayAllowed=usesCampusPayment()&&(SchoolCatalog.isSchoolUrl(url)&&"ecard.sit.edu.cn".equals(Uri.parse(url).getHost())
                     ||allowed&&SchoolCatalog.isCardPaymentGateway(url));
                 if(!allowed) {
+                    if("electricity".equals(service)){
+                        showElectricityError(view,"学校电费页面跳转异常，请返回后重试");
+                        return;
+                    }
                     navigationFailed=true; view.stopLoading(); status.setText("已停止外部页面 · 可在浏览器中继续"); return;
                 }
-                status.setText(autoSync?currentSyncTask():"正在连接 · "+safeHost(url));
+                status.setText(autoSync?currentSyncTask():"electricity".equals(service)?"正在打开学校电费…":"正在连接 · "+safeHost(url));
             }
-            @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&isAllowedMainUrl(url))view.setVisibility(View.VISIBLE);}
+            @Override public void onPageCommitVisible(WebView view,String url){if(!navigationFailed&&isAllowedMainUrl(url)&&!(isElectricityQuery()&&isElectricityRechargePage(url)))view.setVisibility(View.VISIBLE);}
             @Override public void onPageFinished(WebView view,String url) {
                 if(url==null||!url.equals(view.getUrl()))return;
                 boolean authPage=!navigationFailed&&SchoolCatalog.isSchoolUrl(url)
                     &&SessionPolicy.isAuthHost(Uri.parse(url).getHost());
                 if(!navigationFailed&&SchoolCatalog.isSchoolUrl(url))
-                    status.setText(autoSync?currentSyncTask():authPage?"请登录学校账号，完成后会回到当前服务":"校方页面 · "+safeHost(url));
+                    status.setText(autoSync?currentSyncTask():authPage?"请登录学校账号，完成后会回到当前服务":"electricity".equals(service)?"学校电费页面":"校方页面 · "+safeHost(url));
                 if(!navigationFailed&&"card".equals(service)&&SchoolCatalog.isCardPaymentGateway(url))status.setText("支付宝支付页面 · 请在支付应用中核对并确认");
                 if(cardResetAfterPay&&!navigationFailed&&SchoolCatalog.isSchoolUrl(url)&&"ecard.sit.edu.cn".equals(Uri.parse(url).getHost())){
-                    cardResetAfterPay=false;view.clearHistory();status.setText("已返回校园卡 · 请核对学校充值记录");
+                    cardResetAfterPay=false;view.clearHistory();status.setText("已返回学校服务 · 请核对充值记录");
                 }
                 CookieManager.getInstance().flush();
+                if(!navigationFailed&&isElectricityQuery()&&!electricitySsoAttempted
+                    &&SchoolCatalog.isEcardPortalLogin(url)&&isCurrentSession()){
+                    electricitySsoAttempted=true;
+                    portalEntryPending=true;
+                    view.loadUrl(SchoolCatalog.CARD_ENTRY);
+                    return;
+                }
+                if (!navigationFailed && portalEntryPending && SchoolCatalog.isEcardPortal(url)
+                        && !SchoolCatalog.isEcardPortalLogin(url) && isCurrentSession()) {
+                    portalEntryPending = false;
+                    String destination = SchoolCatalog.url(service,postgraduate);
+                    if (!destination.equals(url)) {
+                        view.loadUrl(destination,java.util.Collections.singletonMap("Cache-Control","no-cache"));
+                        return;
+                    }
+                }
+                if(secondStage>0){if(!navigationFailed)advanceBackgroundSecond(url);return;}
+                if(!navigationFailed&&SchoolCatalog.isEcardPortalLogin(url)&&
+                        ("code".equals(service)||"electricity".equals(service))) {
+                    status.setText("一卡通会话未能建立 · 请重新打开学校服务");
+                }
                 if(!navigationFailed&&"card".equals(service))startCardWatch();
-                if(!navigationFailed&&"electricity".equals(service))simplifyElectricity(url,pageVersion);
+                if(!navigationFailed&&"electricity".equals(service)){
+                    updateElectricityPage(view,url);
+                    simplifyElectricity(url,pageVersion);
+                }
                 if(!navigationFailed&&timetableScript!=null&&SchoolCatalog.isAcademicUrl(url)&&!url.toLowerCase(Locale.ROOT).contains("login"))
                     view.evaluateJavascript(timetableScript,null);
                 if(!autoSync&&!navigationFailed){
@@ -229,18 +289,27 @@ public final class SchoolWebActivity extends Activity {
                 if(!navigationFailed&&manualAfterNav)continueManualImport(url);
             }
             @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error) {
+                if("electricity".equals(service)){handler.cancel();showElectricityError(view,"无法验证学校网站证书，请返回后重试");return;}
                 cardGatewayAllowed=false;navigationFailed=true; handler.cancel(); stopForServerError("无法验证学校网站证书 · 登录状态未改变");
                 new AlertDialog.Builder(SchoolWebActivity.this).setTitle("无法验证学校网站证书")
                     .setMessage("连接已停止。请检查手机日期、网络，或稍后重试。").setPositiveButton("知道了",null).show();
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error) {
+                if(request.isForMainFrame()&&"electricity".equals(service)){
+                    showElectricityError(view,"学校电费页面加载失败，请检查网络后重试");
+                    return;
+                }
                 if(request.isForMainFrame()) { navigationFailed=true; stopForServerError("连接学校失败 · 登录状态未改变，可返回重试"); }
             }
             @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response) {
                 if(!request.isForMainFrame())return;
                 navigationFailed=true;
                 int code=response.getStatusCode();
-                if("card".equals(service)&&SchoolCatalog.isCardPaymentGateway(request.getUrl().toString())){cardGatewayAllowed=false;stopForServerError("支付宝页面未能加载 · 请先核对学校充值记录，不要重复提交");return;}
+                if("electricity".equals(service)&&!SchoolCatalog.isCardPaymentGateway(request.getUrl().toString())){
+                    showElectricityError(view,code==401||code==403?"学校电费页面暂未授权，请返回后重试":"学校电费页面暂不可用，请稍后重试");
+                    return;
+                }
+                if(usesCampusPayment()&&SchoolCatalog.isCardPaymentGateway(request.getUrl().toString())){cardGatewayAllowed=false;stopForServerError("支付宝页面未能加载 · 请先核对学校充值记录，不要重复提交");return;}
                 SessionPolicy.Action action=SessionPolicy.action(SessionPolicy.signalForHttp(code),autoSync);
                 if("card".equals(service)&&action==SessionPolicy.Action.REAUTH){offerCardRestart(pageVersion);return;}
                 if(action==SessionPolicy.Action.REAUTH){requestReauth("学校要求重新登录，请完成验证");return;}
@@ -272,13 +341,179 @@ public final class SchoolWebActivity extends Activity {
                     load.run();
                 });
             }else load.run();
-        }else if("code".equals(service))web.loadUrl(SchoolCatalog.url(service,postgraduate),java.util.Collections.singletonMap("Cache-Control","no-cache"));
+        }else if(isElectricityQuery()){
+            web.loadUrl(SchoolCatalog.ELECTRICITY);
+            autoHandler.postDelayed(()->{
+                if(!isFinishing()&&web!=null&&pageVersion==0)
+                    returnElectricityError("学校电费页面未响应，请稍后重试");
+            },25000);
+        }else if("code".equals(service)||"electricity".equals(service)){
+            portalEntryPending=true;
+            web.loadUrl(SchoolCatalog.CARD_ENTRY);
+        }
         else web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.url(service,postgraduate));
     }
     private String readAsset(String name){try(java.io.InputStream in=getAssets().open(name)){java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();byte[] b=new byte[4096];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}catch(Exception e){return "";}}
     private String assetOrNull(String name){String value=readAsset(name);return value.isEmpty()?null:value;}
+    private boolean isElectricityQuery(){
+        return "electricity".equals(service)&&!getIntent().getBooleanExtra("electricityRecharge",false);
+    }
+    private boolean choosesElectricityRoom(){
+        return getIntent().getBooleanExtra("electricityChoose",false);
+    }
+    private boolean isElectricityRechargePage(String url){
+        if(!SchoolCatalog.isEcardPortal(url))return false;
+        String path=Uri.parse(url).getPath();
+        return "/epeortal/pages/h5/elecCharge".equals(path)||"/epeortal/pages/h5/elecCharge/".equals(path);
+    }
+    private void updateElectricityPage(WebView view,String url){
+        if(navigationFailed||!"electricity".equals(service)||!SchoolCatalog.isEcardPortal(url))return;
+        boolean rechargePage=isElectricityRechargePage(url);
+        localizeElectricityRecharge(view,url);
+        if(hasRequestedElectricityRoom()&&electricityMatch==null){
+            int request=++electricityRead;
+            status.setText("正在匹配楼栋和寝室号…");
+            matchElectricityRoom(view,url,request,0);
+            return;
+        }
+        if(!isElectricityQuery())return;
+
+        int request=++electricityRead;
+        electricityRoom=null;
+        if(confirmElectricityRoom!=null)confirmElectricityRoom.setVisibility(View.GONE);
+        if(!rechargePage){
+            view.setVisibility(View.VISIBLE);
+            if("/epeortal/pages/h5/elecQuery".equals(Uri.parse(url).getPath())){
+                if(choosesElectricityRoom()){
+                    status.setText("请在学校页面选择楼栋、楼层和房间");
+                }else{
+                    view.setVisibility(View.INVISIBLE);
+                    status.setText("正在读取学校电费余额…");
+                    autoHandler.postDelayed(()->{
+                        if(electricityRead==request&&url.equals(view.getUrl())&&!isFinishing())
+                            returnElectricityError("学校尚未打开已选寝室，请先点“选择宿舍”");
+                    },12000);
+                }
+            }
+            return;
+        }
+        view.setVisibility(View.INVISIBLE);
+        status.setText("正在读取学校电费余额…");
+        String script=readAsset("electricity-portal-balance.js");
+        pollPortalElectricity(view,url,script,request,0);
+    }
+    private boolean hasRequestedElectricityRoom(){
+        String building=getIntent().getStringExtra("electricityBuilding");
+        String room=getIntent().getStringExtra("electricityRoomNumber");
+        return building!=null&&building.matches("[0-9]{1,4}")&&room!=null&&room.matches("[0-9]{1,8}");
+    }
+    private void matchElectricityRoom(WebView view,String url,int request,int attempt){
+        if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession()||!url.equals(view.getUrl()))return;
+        String path=Uri.parse(url).getPath();
+        if(!isElectricityRechargePage(url)&&!"/epeortal/pages/h5/elecQuery".equals(path))return;
+        if(attempt>=225){returnElectricityError("匹配寝室超时，请稍后重试");return;}
+        try{
+            org.json.JSONObject plan=new org.json.JSONObject()
+                .put("building",getIntent().getStringExtra("electricityBuilding"))
+                .put("room",getIntent().getStringExtra("electricityRoomNumber"));
+            String script=readAsset("electricity-room-match.js");
+            if(script.isEmpty()){returnElectricityError("寝室匹配组件缺失，请重新安装");return;}
+            view.evaluateJavascript(script.replace("__ELECTRICITY_ROOM_MATCH__",plan.toString()),value->{
+                if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession()||!url.equals(view.getUrl()))return;
+                try{
+                    org.json.JSONObject result=new org.json.JSONObject(unquote(value));
+                    String state=result.optString("status");
+                    if("failed".equals(state)){
+                        String reason=result.optString("reason");
+                        // History can expose the new URL before JavaScript switches documents.
+                        // The adapter has made no changes on an unexpected origin/path; wait for commit.
+                        if("page".equals(reason)){
+                            autoHandler.postDelayed(()->matchElectricityRoom(view,url,request,attempt+1),400);
+                            return;
+                        }
+                        returnElectricityError("ambiguous".equals(reason)?"学校返回多个同名选项，未选择寝室，请联系一卡通中心核对"
+                            :"timeout".equals(reason)?"学校寝室选项加载超时，请稍后重试"
+                            :"未找到对应的寝室，请检查楼栋和寝室号；学校选项可能已变化");
+                        return;
+                    }
+                    if("matched".equals(state)){
+                        electricityMatch=result.getJSONObject("room");
+                        status.setText("已匹配："+electricityMatch.getJSONArray("selection").join(" · ").replace("\"",""));
+                        view.evaluateJavascript("window.__xinxinDormMatch.submit()",submitted->{
+                            if(view!=web||isFinishing()||request!=electricityRead||!isCurrentSession())return;
+                            if(!"submitted".equals(unquote(submitted)))returnElectricityError("学校寝室选项已变化，请重新查询");
+                        });
+                        return;
+                    }
+                }catch(Exception ignored){}
+                autoHandler.postDelayed(()->matchElectricityRoom(view,url,request,attempt+1),400);
+            });
+        }catch(Exception ignored){returnElectricityError("寝室编号无法识别，请重新输入");}
+    }
+    private void pollPortalElectricity(WebView view,String url,String script,int request,int attempt){
+        if(isFinishing()||view!=web||request!=electricityRead
+            ||electricityStore==null||!electricityStore.isCurrent()||!isCurrentSession())return;
+        if(script.isEmpty()||attempt>=30){
+            if(choosesElectricityRoom()&&view.getVisibility()==View.VISIBLE)
+                status.setText("当前宿舍电费余额未读取成功，可重新选择");
+            else returnElectricityError("未读取到学校电费余额，请重新选择宿舍后再试");
+            return;
+        }
+        // A same-document history callback can arrive before WebView exposes the new URL.
+        if(!url.equals(view.getUrl())){
+            autoHandler.postDelayed(()->pollPortalElectricity(view,url,script,request,attempt+1),400);
+            return;
+        }
+        String mode=choosesElectricityRoom()?"true":"false";
+        view.evaluateJavascript(script.replace("__ELECTRICITY_CHOOSE__",mode),value->{
+            if(isFinishing()||view!=web||request!=electricityRead
+                ||!electricityStore.isCurrent()||!isCurrentSession())return;
+            if(!url.equals(view.getUrl())){
+                autoHandler.postDelayed(()->pollPortalElectricity(view,url,script,request,attempt+1),400);
+                return;
+            }
+            String payload=unquote(value);
+            if(choosesElectricityRoom()&&!hasRequestedElectricityRoom()&&!payload.isEmpty()){
+                view.setVisibility(View.VISIBLE);
+                status.setText("可在下方重新选择，或使用当前宿舍");
+            }
+            try{
+                electricityRoom=new org.json.JSONObject(payload);
+                if(choosesElectricityRoom()&&!hasRequestedElectricityRoom())confirmElectricityRoom.setVisibility(View.VISIBLE);
+                else savePortalElectricity(electricityRoom);
+            }catch(org.json.JSONException pending){
+                autoHandler.postDelayed(()->pollPortalElectricity(view,url,script,request,attempt+1),400);
+            }
+        });
+    }
+    private void savePortalElectricity(org.json.JSONObject room){
+        if(room==null||electricityStore==null||!electricityStore.isCurrent()||!isCurrentSession()
+            ||web==null||!isElectricityRechargePage(web.getUrl()))return;
+        try{
+            if(hasRequestedElectricityRoom()){
+                if(electricityMatch==null||!electricityMatch.getString("roomId").equals(room.optString("roomId"))
+                    ||!electricityMatch.getString("buildingId").equals(room.optString("buildingId")))
+                    throw new IllegalStateException("学校返回的寝室与输入不一致，本次结果未保存");
+                room.put("buildingNumber",electricityMatch.getString("buildingNumber"))
+                    .put("roomNumber",electricityMatch.getString("roomNumber"))
+                    .put("selection",electricityMatch.getJSONArray("selection"));
+            }
+            electricityStore.savePortalBalance(room,choosesElectricityRoom());
+            setResult(RESULT_OK);
+            leaveSchool();
+        }catch(Exception failure){
+            returnElectricityError(failure.getMessage());
+        }
+    }
+    private void returnElectricityError(String message){
+        setResult(RESULT_CANCELED,new Intent().putExtra("electricityError",message));
+        leaveSchool();
+    }
+    private boolean usesCampusPayment(){
+        return "card".equals(service)||("electricity".equals(service)&&!isElectricityQuery());
+    }
     private boolean isAllowedMainUrl(String url){
-        return SchoolCatalog.isSchoolUrl(url)||("card".equals(service)&&cardGatewayAllowed&&isCurrentSession()&&SchoolCatalog.isCardPaymentGateway(url));
+        return SchoolCatalog.isSchoolUrl(url)||(usesCampusPayment()&&cardGatewayAllowed&&isCurrentSession()&&SchoolCatalog.isCardPaymentGateway(url));
     }
     private boolean isPaymentSource(){
         return web!=null&&isAllowedMainUrl(web.getUrl());
@@ -333,6 +568,12 @@ public final class SchoolWebActivity extends Activity {
             if(target!=null)out.setPackage(target);
             return out;
         }catch(Exception ignored){return null;}
+    }
+    private void localizeElectricityRecharge(WebView view,String url){
+        if(navigationFailed||!"electricity".equals(service)||!SchoolCatalog.isEcardPortal(url))return;
+        if(!isElectricityRechargePage(url)&&!"/epeortal/pages/h5/elecQuery".equals(Uri.parse(url).getPath()))return;
+        String script=assetOrNull("electricity-recharge-zh.js");
+        if(script!=null)view.evaluateJavascript(script,null);
     }
     private void simplifyElectricity(String url,int version){
         Uri page=Uri.parse(url);
@@ -677,8 +918,14 @@ public final class SchoolWebActivity extends Activity {
                 else if("rejected".equals(state)){
                     new SchoolAccount(this).forget(postgraduate);
                     status.setText("保存的密码未通过，请在学校页面重新输入");
-                }else if("submitted".equals(state))status.setText("正在验证学校账号…");
-                else if("not-login".equals(state)||"needs-login".equals(state))manualLoginSubmitted=false;
+                }else if("submitted".equals(state)){
+                    status.setText("正在验证学校账号…");
+                    if(isElectricityQuery())autoHandler.postDelayed(()->{
+                        if(web!=null&&!isFinishing()&&version==pageVersion&&isCurrentSession()
+                            &&"正在验证学校账号…".contentEquals(status.getText()))
+                            status.setText("学校验证尚未完成，请在页面继续，或返回稍后重试");
+                    },8000);
+                }else if("not-login".equals(state)||"needs-login".equals(state))manualLoginSubmitted=false;
             });
         }catch(Exception e){manualLoginSubmitted=false;}
     }
@@ -686,7 +933,7 @@ public final class SchoolWebActivity extends Activity {
     private void resumeTarget(){
         SchoolSession.endReauth(this,authFlowId);
         SessionPolicy.Target target=SessionPolicy.target(returnService);
-        Intent main=new Intent(this,MainActivity.class).putExtra("tab",0)
+        Intent main=new Intent(this,MainActivity.class).putExtra("tab",target==SessionPolicy.Target.TIMETABLE||target==SessionPolicy.Target.MAIN?0:1)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);
         Intent next;
         switch(target){
@@ -706,6 +953,13 @@ public final class SchoolWebActivity extends Activity {
         else startActivities(new Intent[]{main,next});
         finish();
     }
+    private void showElectricityError(WebView view,String message){
+        navigationFailed=true;
+        cardGatewayAllowed=false;
+        view.setVisibility(View.INVISIBLE);
+        view.stopLoading();
+        status.setText(message);
+    }
     private void leaveSchool(){
         if(!authenticationAccepted)SchoolSession.endReauth(this,authFlowId);
         if(!AppSession.valid(this)){finish();return;}
@@ -724,6 +978,12 @@ public final class SchoolWebActivity extends Activity {
         SchoolSession.endReauth(this,authFlowId);
         SchoolSession.markActive(this,returnService);
         authenticationAccepted=true;
+        if ("timetable".equals(service) && !sessionOnly && !mainPreviewed) {
+            mainPreviewed = true;
+            pendingPassword = "";
+            startActivity(new Intent(this, MainActivity.class).putExtra("tab", 0)
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        }
     }
     private boolean isCurrentSession(){
         if(getSharedPreferences("school_profile",0).getBoolean("postgraduate",false)!=postgraduate)return false;
@@ -732,7 +992,7 @@ public final class SchoolWebActivity extends Activity {
         return ((postgraduate?"pg:":"ug:")+pendingUsername)
             .equals(getSharedPreferences("school_session",0).getString("owner",""));
     }
-    private void enterApp(){pendingPassword="";autoStopped=true;startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
+    private void enterApp(){pendingPassword="";autoStopped=true;if(mainPreviewed){finish();return;}startActivity(new Intent(this,MainActivity.class).putExtra("tab",0).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));finish();}
     /** 课表、成绩、考试完成后继续读第二课堂学分；失败不影响已保存数据。 */
     private void startSecondClassSync(){
         if(isFinishing()||isDestroyed()||secondSyncStarted)return;
@@ -740,9 +1000,65 @@ public final class SchoolWebActivity extends Activity {
         if(!AppSession.valid(this)||!isCurrentSession()){finish();return;}
         secondSyncStarted=true;
         status.setText("正在读取第二课堂学分…");
-        Intent i=new Intent(this,DektActivity.class).putExtra("autoSync",true).putExtra("postgraduate",postgraduate).putExtra("syncIncomplete",syncIncomplete);
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        startActivity(i);finish();
+        startBackgroundSecond(1, SchoolCatalog.DEKT_SSO);
+    }
+    private void startBackgroundSecond(int stage,String target) {
+        secondStage=stage;
+        secondReading=false;
+        secondOpened=false;
+        autoHandler.postDelayed(()->{
+            if(secondStage==stage&&!isFinishing())finishBackgroundSecond(false);
+        },stage==1?45000:200000);
+        web.loadUrl(target);
+    }
+    private void advanceBackgroundSecond(String url) {
+        if(!isCurrentSession()){finish();return;}
+        Uri page=Uri.parse(url);
+        if(!SchoolCatalog.isSchoolUrl(url)||!"xg.sit.edu.cn".equals(page.getHost())||SessionPolicy.isLoginUrl(url)||secondReading)return;
+        String path=page.getPath();
+        if(secondStage==1&&!"/dektxf/xfqktj".equals(path)){
+            if(!secondOpened){secondOpened=true;web.loadUrl(SchoolCatalog.DEKT_HOME);}
+            return;
+        }
+        if(secondStage==2&&"/service/fwdt".equals(path)){
+            web.evaluateJavascript(readAsset("dekt-enter.js"),null);
+            return;
+        }
+        if(secondStage==2&&(path==null||!(path.equals("/apply-manage/xsrd")||path.startsWith("/apply-manage/xsrd/"))))return;
+        String script=readAsset(secondStage==1?"dekt-extract.js":"dekt-records.js");
+        if(script.isEmpty()){finishBackgroundSecond(false);return;}
+        secondReading=true;
+        web.evaluateJavascript(script,null);
+        pollBackgroundSecond(secondStage,pageVersion);
+    }
+    private void pollBackgroundSecond(int stage,int version) {
+        autoHandler.postDelayed(()->{
+            if(web==null||isFinishing()||secondStage!=stage||version!=pageVersion||!isCurrentSession())return;
+            String variable=stage==1?"window.__xinxinDekt":"window.__xinxinRecords";
+            web.evaluateJavascript(variable+"?JSON.stringify("+variable+"):''",value->{
+                if(web==null||isFinishing()||secondStage!=stage||version!=pageVersion||!isCurrentSession())return;
+                try{
+                    String raw=unquote(value);
+                    if(raw.isEmpty()){pollBackgroundSecond(stage,version);return;}
+                    org.json.JSONObject result=new org.json.JSONObject(raw);
+                    String state=result.optString("status");
+                    if("failed".equals(state)){finishBackgroundSecond(false);return;}
+                    if(!"complete".equals(state)){pollBackgroundSecond(stage,version);return;}
+                    if(stage==1)new DektStore(this).save(DektParser.parse(result));
+                    else new DektRecordStore(this).save(DektRecordParser.parse(result));
+                    MainActivity.refreshSyncedData();
+                    finishBackgroundSecond(true);
+                }catch(Exception e){finishBackgroundSecond(false);}
+            });
+        },650);
+    }
+    private void finishBackgroundSecond(boolean success) {
+        if(!isCurrentSession()){finish();return;}
+        syncIncomplete|=!success;
+        if(secondStage==1){startBackgroundSecond(2,SchoolCatalog.DEKT_HALL);return;}
+        secondStage=0;
+        if(syncIncomplete)Toast.makeText(this,"部分学校数据未更新，已保留原数据",Toast.LENGTH_SHORT).show();
+        enterApp();
     }
     private void stopAutomatic(String message){if(autoStopped)return;if(!authenticationAccepted){waitForUser(message);return;}if(syncAll){skipSyncStage(message);return;}autoStopped=true;resetImportButton();Toast.makeText(this,"登录成功，课表暂未同步："+message,Toast.LENGTH_LONG).show();enterApp();}
     private void skipSyncStage(String message){
@@ -755,6 +1071,7 @@ public final class SchoolWebActivity extends Activity {
     private void offerManualImport(String message){
         if(isFinishing()||isDestroyed())return;
         if(syncAll&&authenticationAccepted){skipSyncStage(message);return;}
+        if(mainPreviewed){Toast.makeText(this,message,Toast.LENGTH_LONG).show();enterApp();return;}
         if(autoSync&&academicService!=null&&authenticationAccepted){
             autoStopped=true;autoHandler.removeCallbacksAndMessages(null);resetImportButton();hideSchool();
             status.setText(message+"，原有数据已保留，请返回后重试");return;
@@ -857,7 +1174,7 @@ public final class SchoolWebActivity extends Activity {
             parsed.put("startDate",start).put("totalWeeks",Math.max(maxWeek,Math.max(old.optInt("totalWeeks",20),parsed.optInt("termWeeks",0))));
             for(String key:new String[]{"patches","periodTimes","viewMode","palette","wallpaper","visibleDays","reminderMinutes","deletedCourseIds","smartWeekend","showStatus","cardAlpha"})if(old.has(key))parsed.put(key,old.get(key));
             org.json.JSONArray previous=old.optJSONArray("courses"),deleted=old.optJSONArray("deletedCourseIds");java.util.Set<String> removed=new java.util.HashSet<>();if(deleted!=null)for(int i=0;i<deleted.length();i++)removed.add(deleted.optString(i));java.util.LinkedHashMap<String,org.json.JSONObject> merged=new java.util.LinkedHashMap<>();for(int i=0;i<courses.length();i++){org.json.JSONObject c=courses.getJSONObject(i);if(!removed.contains(c.optString("id")))merged.put(c.optString("id"),c);}if(previous!=null)for(int i=0;i<previous.length();i++){org.json.JSONObject c=previous.getJSONObject(i);if("manual".equals(c.optString("origin")))merged.put(c.optString("id"),c);}org.json.JSONArray complete=new org.json.JSONArray();for(org.json.JSONObject c:merged.values()){complete.put(c);maxWeek=Math.max(maxWeek,c.optInt("endWeek",1));}parsed.put("courses",complete).put("totalWeeks",Math.max(maxWeek,parsed.optInt("totalWeeks",20)));
-            repository.save(parsed);saveProfileName(parsed);org.json.JSONArray missing=parsed.optJSONArray("failedWeeks");
+            repository.save(parsed);saveProfileName(parsed);MainActivity.refreshSyncedData();org.json.JSONArray missing=parsed.optJSONArray("failedWeeks");
             if(syncAll){if(missing!=null&&missing.length()>0)syncIncomplete=true;startAcademicStage("grades");}
             else{Toast.makeText(this,missing==null||missing.length()==0?"登录成功，课表已同步":"课表已同步（第"+missing.join("、")+"周未抓取，请稍后重试）",Toast.LENGTH_LONG).show();enterApp();}
         }catch(Exception e){offerManualImport(e.getMessage()==null?"课表保存失败":e.getMessage());}
@@ -1061,7 +1378,7 @@ public final class SchoolWebActivity extends Activity {
                     // 保存前再次校验账号，禁止旧页面的异步响应写进新账号的存储。
                     try{
                         acceptAuthentication();
-                        if(!keepOld)new AcademicRepository(SchoolWebActivity.this).save(target,parsed);
+                        if(!keepOld){new AcademicRepository(SchoolWebActivity.this).save(target,parsed);MainActivity.refreshSyncedData();}
                     }catch(Exception e){stopForServerError("账号状态已变化或无法保存，原有数据未覆盖");return;}
                     if(!syncAll)Toast.makeText(this,keepOld?"当前学期暂无"+("exams".equals(target)?"考试":"成绩")+"，已保留上次数据":"已读取 "+count+" 条记录",Toast.LENGTH_SHORT).show();
                     if(syncAll){
@@ -1069,9 +1386,9 @@ public final class SchoolWebActivity extends Activity {
                         else startSecondClassSync();
                         return;
                     }
-                    // 刷新入口可能在登录前已被清理，读完统一回到对应的列表页。
+                    // Reuse the caller list and preserve its parent instead of clearing the task.
                     startActivity(new Intent(this,AcademicActivity.class).putExtra("service",target)
-                        .putExtra("postgraduate",postgraduate).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));
+                        .putExtra("postgraduate",postgraduate).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP));
                     finish();
                 });
             }catch(Exception e){
@@ -1178,11 +1495,16 @@ public final class SchoolWebActivity extends Activity {
         }));dialog.show();
     }
     private void showMenu() {
+        if(isElectricityQuery()){
+            new AlertDialog.Builder(this).setTitle("宿舍电费").setItems(new String[]{"重新加载"},
+                (dialog,which)->web.reload()).show();
+            return;
+        }
         String[] items=SchoolCatalog.isAcademic(service)
             ?new String[]{"重新加载","前往学校系统首页","保存当前页","在系统浏览器打开","学校统一门户"}
             :new String[]{"重新加载","前往学校系统首页","在系统浏览器打开","学校统一门户"};
         new AlertDialog.Builder(this).setTitle("学校服务").setItems(items,(d,which)->{
-            if(which==0){if("card".equals(service))web.loadUrl(SchoolCatalog.CARD_ENTRY);else web.reload();}
+            if(which==0){if(usesCampusPayment()){portalEntryPending="electricity".equals(service);web.loadUrl(SchoolCatalog.CARD_ENTRY);}else web.reload();}
             else if(which==1) web.loadUrl("auth".equals(service)?SchoolCatalog.AUTH:SchoolCatalog.isAcademic(service)?(postgraduate?SchoolCatalog.PG_HOME:SchoolCatalog.UG_HOME):"card".equals(service)?SchoolCatalog.CARD_ENTRY:SchoolCatalog.CARD_HOME);
             else if(which==items.length-1) web.loadUrl(SchoolCatalog.PORTAL);
             else if(which==2&&SchoolCatalog.isAcademic(service)) saveCurrentPage();
@@ -1226,10 +1548,14 @@ public final class SchoolWebActivity extends Activity {
         cardPaying=false;
         if(web==null||isFinishing()||isDestroyed()||version!=pageVersion||!isCurrentSession())return;
         // A callback is not proof of payment; ignore its result URL and refresh only the known school entry.
-        cardResetAfterPay=true;web.loadUrl(SchoolCatalog.CARD_ENTRY);
+        cardResetAfterPay=true;portalEntryPending="electricity".equals(service);web.loadUrl(SchoolCatalog.CARD_ENTRY);
     }
     private void confirmExternal(String url) {
-        final boolean sdk="card".equals(service)&&SchoolCatalog.isAlipayCashierUrl(url);
+        if(isElectricityQuery()){
+            status.setText("电费查询已停止外部跳转，请返回后重试");
+            return;
+        }
+        final boolean sdk=usesCampusPayment()&&SchoolCatalog.isAlipayCashierUrl(url);
         final Intent external=sdk?null:externalIntent(url);
         if((!sdk&&external==null)||((sdk||external.getPackage()!=null)&&(!isPaymentSource()||!isCurrentSession()))) {
             Toast.makeText(this,"此链接暂不支持，请从学校官方入口办理",Toast.LENGTH_LONG).show(); return;
@@ -1253,11 +1579,9 @@ public final class SchoolWebActivity extends Activity {
         dialog.show();
     }
     @Override public void onBackPressed() {
-        if("code".equals(service)||!AppSession.valid(this)){leaveSchool();return;}
-        if(autoSync&&!authenticationAccepted&&web!=null&&SessionPolicy.isLoginUrl(web.getUrl())){leaveSchool();return;}
-        if(web!=null&&web.canGoBack())web.goBack();else finish();
+        leaveSchool();
     }
-    @Override protected void onPause() { cardForeground=false;stopCardWatch();if(web!=null) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
+    @Override protected void onPause() { cardForeground=false;stopCardWatch();if(web!=null&&!mainPreviewed) web.onPause(); CookieManager.getInstance().flush(); super.onPause(); }
     @Override protected void onResume() { super.onResume();cardForeground=true; if(web!=null){web.onResume();startCardWatch();} }
     @Override protected void onStop(){super.onStop();if("code".equals(service)&&!autoSync&&!isFinishing()){retainPayment=false;finish();}}
     @Override protected void onDestroy() {

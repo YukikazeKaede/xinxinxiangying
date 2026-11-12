@@ -119,7 +119,7 @@ public final class ActivitiesActivity extends Activity {
     }
 
     private void leave() {
-        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class));
+        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class).putExtra("tab", 1));
         finish();
     }
 

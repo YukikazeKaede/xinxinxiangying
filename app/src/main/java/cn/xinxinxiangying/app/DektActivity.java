@@ -62,6 +62,7 @@ public final class DektActivity extends Activity {
     private boolean pg;
     private boolean autoSync;
     private boolean backgroundRead;
+    private boolean recordsInBackground;
     private boolean syncIncomplete;
     private View syncOverlay;
     private boolean importing, auto;
@@ -96,7 +97,7 @@ public final class DektActivity extends Activity {
         back.addView(new CampusUi.Icon(this, "back", CampusUi.GREEN), new LinearLayout.LayoutParams(dp(22), dp(22)));
         back.setContentDescription("返回");
         back.setFocusable(true);
-        back.setOnClickListener(v -> leave());
+        back.setOnClickListener(v -> onBackPressed());
         bar.addView(back, new LinearLayout.LayoutParams(dp(44), dp(44)));
         TextView title = CampusUi.text(this, SchoolCatalog.title("second"), 18, CampusUi.INK);
         title.setTypeface(null, Typeface.BOLD);
@@ -151,11 +152,12 @@ public final class DektActivity extends Activity {
 
     /** 导入页可能独占一个任务，返回时要回到主界面而不是直接退出应用。 */
     private void leave() {
-        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class));
+        if (isTaskRoot()) startActivity(new Intent(this, MainActivity.class).putExtra("tab", 1));
         finish();
     }
 
     @Override public void onBackPressed() {
+        if (recordsInBackground) { leave(); return; }
         if (importing) { quitWeb(); return; }
         if (autoSync) { finishToApp(null); return; }
         leave();
@@ -179,6 +181,7 @@ public final class DektActivity extends Activity {
         browseRow();
         recordsEntry();
         footnote("数据来自学校第二课堂系统，以学校页面为准。");
+        if (recordsInBackground) status.setText("学分已更新 · 正在后台读取加分记录…");
     }
 
     /** 顶部总学分卡：与学校页面一致，显示「累计获得 已获 / 需求」。 */
@@ -616,7 +619,7 @@ public final class DektActivity extends Activity {
             else new AlertDialog.Builder(this).setTitle("清除第二课堂学分？")
                 .setMessage("只清除本机保存的这份记录，学校系统里的数据不受影响。")
                 .setNegativeButton("取消", null)
-                .setPositiveButton("清除", (d, w) -> { store.clear(); recordStore.clear(); open.clear(); openRecords.clear(); render(); }).show();
+                .setPositiveButton("清除", (d, w) -> { if(recordsInBackground)quitWeb();store.clear(); recordStore.clear(); open.clear(); openRecords.clear(); render(); }).show();
         }).show();
     }
 
@@ -626,7 +629,11 @@ public final class DektActivity extends Activity {
     private void readRecords() { openWeb(SchoolCatalog.DEKT_HALL, false, true); }
 
     private void openWeb(String url, boolean extract, boolean records) {
+        openWeb(url, extract, records, false);
+    }
+    private void openWeb(String url, boolean extract, boolean records, boolean inBackground) {
         if (!AppSession.require(this, "second")) { if (autoSync) finishToApp(null); return; }
+        recordsInBackground = inBackground;
         boolean hidden = autoSync || extract || records;
         if (webPage != null && hidden != backgroundRead) {
             web.stopLoading(); web.destroy(); web = null; webPage = null; syncOverlay = null;
@@ -645,15 +652,32 @@ public final class DektActivity extends Activity {
         if (webPage == null) webPage = buildWeb();
         hideSchool();
         webStatus.setText(autoSync ? syncTask() : "正在复用学校登录状态…");
-        setContentView(webPage);
+        detach(page); detach(webPage);
+        webPage.setImportantForAccessibility(recordsInBackground
+            ? View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS : View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
+        if (recordsInBackground) {
+            // Keep the reader attached and laid out while the opaque native page stays interactive.
+            android.widget.FrameLayout host = new android.widget.FrameLayout(this);
+            host.addView(webPage, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            host.addView(page, new android.widget.FrameLayout.LayoutParams(-1, -1));
+            setContentView(host); render();
+        } else setContentView(webPage);
         armSyncTimeout();
-        if (autoSync && records && isXgPage(web.getUrl()) && !loginPage(web.getUrl())) {
+        if ((autoSync || recordsInBackground) && records && isXgPage(web.getUrl()) && !loginPage(web.getUrl())) {
             pendingTarget = null;
             web.loadUrl(url);
             return;
         }
         // 先走学工系统的统一认证入口；已有 CAS 会话时直接换票，不再要求输入密码。
         web.loadUrl(SchoolCatalog.DEKT_SSO);
+    }
+    private static void detach(View view) {
+        if (view != null && view.getParent() instanceof android.view.ViewGroup)
+            ((android.view.ViewGroup) view.getParent()).removeView(view);
+    }
+    private void finishBackgroundRecords(String message) {
+        quitWeb();
+        status.setText(message);
     }
 
     /** 内嵌的学校页面：只允许 sit.edu.cn，设置与其它学校页面一致。 */
@@ -763,6 +787,7 @@ public final class DektActivity extends Activity {
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (!request.isForMainFrame() || !currentPage(view, request.getUrl().toString())) return;
+                if (recordsInBackground) { finishBackgroundRecords("加分记录连接失败，已保留原记录，可稍后重试"); return; }
                 if (autoSync) { finishAutoStage(false); return; }
                 webStatus.setText("连接学校页面失败 · 请确认在校园网内");
             }
@@ -777,11 +802,15 @@ public final class DektActivity extends Activity {
                     view.loadUrl(target);
                     return;
                 }
+                if (recordsInBackground && response.getStatusCode() >= 400) {
+                    finishBackgroundRecords("加分记录暂不可用，已保留原记录，可稍后重试"); return;
+                }
                 if (autoSync && response.getStatusCode() >= 400) finishAutoStage(false);
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, android.net.http.SslError error) {
                 handler.cancel();
                 if (!currentPage(view, error.getUrl())) return;
+                if (recordsInBackground) { finishBackgroundRecords("无法验证学校网站证书，加分记录未更新"); return; }
                 if (autoSync) { finishAutoStage(false); return; }
                 webStatus.setText("无法验证学校网站证书 · 已停止加载");
             }
@@ -807,6 +836,9 @@ public final class DektActivity extends Activity {
         }
     }
     private void revealSchool() {
+        if (recordsInBackground) {
+            finishBackgroundRecords("加分记录需要学校验证，请点“加分记录”重新读取；原记录已保留"); return;
+        }
         if (syncOverlay != null) {
             syncOverlay.setVisibility(View.GONE);
             web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
@@ -908,9 +940,11 @@ public final class DektActivity extends Activity {
     }
 
     private void quitWeb() {
+        recordsInBackground = false;
         generation++;
         reading = false;
         handler.removeCallbacksAndMessages(null);
+        syncTimeout.removeCallbacksAndMessages(null);
         if (web != null) {
             web.evaluateJavascript("if(window.__xinxinRecords&&window.__xinxinRecords.status==='pending')"
                 + "{window.__xinxinRecords.status='failed';window.__xinxinRecords.reason='cancelled';}", null);
@@ -918,7 +952,7 @@ public final class DektActivity extends Activity {
         }
         importing = false;
         if (autoSync) { finishToApp("已停止同步，原有数据已保留"); return; }
-        if (page != null) { setContentView(page); render(); }
+        if (page != null) { detach(page); detach(webPage); setContentView(page); render(); }
     }
 
     /** 手动或在页面结束时读取当前页：脚本自己会在页面里重试，这里只等它给出结果。 */
@@ -932,7 +966,10 @@ public final class DektActivity extends Activity {
             webStatus.setText(backgroundRead ? syncTask() : "请先进入服务大厅的「学分明细查询」");
             return;
         }
-        if (run == null || run.isEmpty()) { if(autoSync)finishAutoStage(false);else webStatus.setText("读取脚本缺失，请安装完整版本"); return; }
+        if (run == null || run.isEmpty()) {
+            if(recordsInBackground)finishBackgroundRecords("加分记录读取组件缺失，已保留原记录");
+            else if(autoSync)finishAutoStage(false);else webStatus.setText("读取脚本缺失，请安装完整版本"); return;
+        }
         reading = true;
         final int token = ++generation;
         polls = 0;
@@ -981,6 +1018,12 @@ public final class DektActivity extends Activity {
             handler.postDelayed(this::extractNow, 3000);
             return;
         }
+        if (recordsInBackground) {
+            finishBackgroundRecords("login".equals(reason)
+                ? "加分记录需要学校验证，请点“加分记录”重新读取；原记录已保留"
+                : "加分记录未完整读取，已保留原记录，可稍后重试");
+            return;
+        }
         if (autoSync && !"login".equals(reason)) {
             finishAutoStage(false);
             return;
@@ -1011,11 +1054,18 @@ public final class DektActivity extends Activity {
             handler.removeCallbacksAndMessages(null);
             syncTimeout.removeCallbacksAndMessages(null);
             if (autoSync) { finishAutoStage(true); return; }
-            setContentView(page);
+            if (recordsInBackground) { finishBackgroundRecords(recordToast()); return; }
+            if (!recordsTarget) {
+                Toast.makeText(this, "第二课堂学分已更新", Toast.LENGTH_SHORT).show();
+                openWeb(SchoolCatalog.DEKT_HALL, false, true, true);
+                return;
+            }
+            detach(page); detach(webPage); setContentView(page);
             render();
             Toast.makeText(this, recordsTarget ? recordToast() : "第二课堂学分已更新", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             reading = false;
+            if (recordsInBackground) { finishBackgroundRecords("加分记录未能保存，已保留原记录"); return; }
             if (autoSync) finishAutoStage(false);
             else webStatus.setText("读取失败，请重试，原有学分已保留");
         }
@@ -1032,9 +1082,7 @@ public final class DektActivity extends Activity {
         if (!store.isCurrent()) { finish(); return; }
         if (message != null && !message.isEmpty())
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-        startActivity(new Intent(this, MainActivity.class).putExtra("tab", 0)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
-        finish();
+        leave();
     }
 
     private static String unquote(String value) {

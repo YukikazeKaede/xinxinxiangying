@@ -51,7 +51,7 @@ public final class AcademicActivity extends Activity {
 
     /** 导入完成后本页可能独占一个任务，返回时要回到主界面而不是直接退出应用。 */
     private void leave(){
-        if(isTaskRoot())startActivity(new Intent(this,MainActivity.class));
+        if(isTaskRoot())startActivity(new Intent(this,MainActivity.class).putExtra("tab",1));
         finish();
     }
     @Override public void onBackPressed(){leave();}
