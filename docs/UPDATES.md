@@ -20,6 +20,17 @@
 - `sha256` 必须与 APK 实际哈希一致；`size` 为字节数。
 - 客户端在 `app/src/main/res/values/strings.xml` 的 `update_manifest_url` 读取清单地址。
 
+## 多源下载（0.8.2 起）
+
+- 顶层以及每个 `artifacts.<abi>` 可增加可选的 `mirrors` HTTPS 地址数组；同架构各来源必须为字节完全一致的 APK，共用摘要与大小。
+- 客户端选择设备架构后，仅使用该项的 `[url] + mirrors`，去重并忽略无效、非 HTTPS 或带凭据的镜像；不会把顶层 arm64 镜像混入其他架构。
+- 主源失败、HTTP 非 200、连接超时（10 秒）、读取停滞（20 秒）、大小或 SHA-256 不符时尝试下一个源；传输满 15 秒平均低于 64 KiB/s 也切换，最后一个源允许慢速完成。
+- 切换时重新从零下载 `.part`，界面显示当前源和进度；取消会终止整个任务。只有校验通过才改名并调用安装器，已有同版且摘要一致的包直接复用。
+- `mirrors` 缺省时仍为单源；0.8.1 及更早版本忽略该字段，因此从旧版升级到 0.8.2 的这一次仍使用 GitHub，安装 0.8.2 后的后续更新才支持自动镜像。
+- 更新清单仍在 GitHub，R2 仅存安装包；清单无法访问时镜像不能替代版本检查。`r2.dev` 用于开发测试，有限流；正式分发建议自定义域名并实测可达性。
+
+0.8.2 的 R2 文件放在 `0.8.2/`，完整地址为 `https://pub-8d7524c5bc734122a0e7ffdf4b3b82c2.r2.dev/0.8.2/xinxin_0.8.2-<abi>.apk`。
+
 ## 四种架构独立发布
 
 每个 Release 上传 `xinxin_<versionName>-arm64-v8a.apk`、`xinxin_<versionName>-armeabi-v7a.apk`、`xinxin_<versionName>-x86.apk`、`xinxin_<versionName>-x86_64.apk`。所有 APK 使用相同版本号与签名。
@@ -32,10 +43,13 @@
 .\tools\make-update-json.ps1 -AllAbis `
   -Apk .\dist\xinxin_<versionName>-arm64-v8a.apk `
   -Url "https://github.com/YukikazeKaede/xinxinxiangying/releases/download/v<versionName>/xinxin_<versionName>-arm64-v8a.apk" `
+  -Mirrors "https://pub-8d7524c5bc734122a0e7ffdf4b3b82c2.r2.dev/<versionName>/xinxin_<versionName>-arm64-v8a.apk" `
   -NotesFile .\notes.txt -OutFile .\update.json
 ```
 
 脚本检查四个包版本一致、各自只含指定架构，并从实际文件生成摘要和字节数。单包模式不传 `-AllAbis`；未传 `-Apk` 时优先选择 arm64-v8a，避免误取最后生成的 x86_64 包。旧的单包清单格式继续可读。
+
+`-Mirrors` 接受数组；`-AllAbis` 时传入 arm64-v8a 镜像文件地址，脚本按同一前缀生成其他三架构的镜像，并分别写入其条目。先上传四个 APK 至 R2 对应版本目录，公开下载并比对大小和 SHA-256，全部一致后才发布 GitHub 清单。
 
 ## 发版流程
 
@@ -60,3 +74,6 @@
 - `versionCode` 只能递增；覆盖安装要求签名一致。
 - 更新清单可被托管方替换，因此发布账号和私钥必须妥善保护。
 - 建议保留一个可回滚的旧版本 APK；服务端清单出错时用户仍可手动安装。
+- 改低清单版本号不会让已升级客户端自动降级；如需撤回有问题的版本，应以更高 versionCode 发布修复包，Android 还要求相同签名。
+
+验收：正常主源不请求镜像；主源 404、超时、持续低速及哈希错误均切换；全部失败显示源数量；取消不再请求镜像且清理 `.part`；验证旧清单、四架构选择及缓存复用。真机需另走一次系统安装确认与覆盖升级。

@@ -8,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
-import android.view.View;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -17,16 +16,13 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.List;
 
 /**
  * In-app update check. The feed is a small HTTPS JSON document configured by
@@ -39,8 +35,6 @@ public final class UpdateChecker {
     private static boolean autoChecked;
     private static File pendingInstall;
     private static volatile boolean downloading;
-    private static volatile boolean cancelled;
-    private static volatile HttpURLConnection connection;
 
     private UpdateChecker() {}
 
@@ -48,6 +42,7 @@ public final class UpdateChecker {
         int code;
         String name;
         String url;
+        List<String> sources;
         String sha256;
         long size;
         String notes;
@@ -142,6 +137,7 @@ public final class UpdateChecker {
             m.name = o.getString("versionName").trim();
             JSONObject artifact = UpdateArtifact.select(o, Build.SUPPORTED_ABIS);
             m.url = artifact.getString("url").trim();
+            m.sources = UpdateArtifact.sources(artifact);
             m.sha256 = artifact.getString("sha256").trim().toLowerCase(Locale.ROOT);
             m.size = artifact.optLong("size", 0);
             m.notes = o.optString("notes", "").trim();
@@ -170,20 +166,14 @@ public final class UpdateChecker {
     }
 
     private static void download(final Activity a, final Manifest m) {
-        if (a.isFinishing() || a.isDestroyed()) return;
+        if (downloading || a.isFinishing() || a.isDestroyed()) return;
         final File dir = new File(a.getFilesDir(), "updates");
         if (!dir.exists() && !dir.mkdirs()) {
             Toast.makeText(a, "无法创建更新目录", Toast.LENGTH_SHORT).show();
             return;
         }
         final File target = new File(dir, "update-" + m.code + ".apk");
-        try {
-            if (target.isFile() && m.sha256.equals(sha256(target))) {
-                install(a, target);
-                return;
-            }
-        } catch (Exception ignored) {}
-        if (target.exists()) target.delete();
+        final UpdateDownload transfer = new UpdateDownload();
 
         int pad = (int) (20 * a.getResources().getDisplayMetrics().density);
         LinearLayout box = new LinearLayout(a);
@@ -199,74 +189,33 @@ public final class UpdateChecker {
                 .setTitle("下载更新")
                 .setView(box)
                 .setNegativeButton("取消", (d, w) -> {
-                    cancelled = true;
-                    HttpURLConnection c = connection;
-                    if (c != null) c.disconnect();
+                    transfer.cancel();
                 })
                 .setCancelable(false)
                 .create();
         downloading = true;
-        cancelled = false;
         dialog.show();
 
         new Thread(() -> {
-            final File part = new File(target.getPath() + ".part");
             try {
-                HttpURLConnection c = (HttpURLConnection) new URL(m.url).openConnection();
-                connection = c;
-                c.setConnectTimeout(10000);
-                c.setReadTimeout(20000);
-                c.setInstanceFollowRedirects(true);
-                c.setUseCaches(false);
-                c.setRequestProperty("Cache-Control", "no-cache");
-                c.setRequestProperty("User-Agent", "xinxin-update");
-                int status = c.getResponseCode();
-                if (!"https".equals(c.getURL().getProtocol())) throw new IOException("更新下载地址必须是 HTTPS");
-                if (status != 200) throw new IOException("下载失败 HTTP " + status);
-                final long total = m.size > 0 ? m.size : contentLength(c.getHeaderField("Content-Length"));
-                if (total > 0) a.runOnUiThread(() -> {
-                    bar.setIndeterminate(false);
-                    bar.setMax(100);
-                });
-                try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-                    byte[] buf = new byte[16384];
-                    long read = 0;
-                    int n;
-                    int lastPercent = -1;
-                    while ((n = in.read(buf)) > 0) {
-                        if (cancelled) throw new IOException("已取消");
-                        out.write(buf, 0, n);
-                        read += n;
-                        if (total > 0) {
-                            int percent = (int) (read * 100 / total);
-                            if (percent != lastPercent) {
-                                lastPercent = percent;
-                                final int shown = percent;
-                                a.runOnUiThread(() -> {
-                                    if (dialog.isShowing()) bar.setProgress(shown);
-                                });
-                            }
-                        }
-                    }
-                } finally {
-                    c.disconnect();
-                    connection = null;
-                }
-                if (cancelled) throw new IOException("已取消");
-                if (!m.sha256.equals(sha256(part))) throw new IOException("安装包校验失败，请重试");
-                if (!part.renameTo(target)) throw new IOException("无法保存安装包");
+                transfer.download(m.sources, target, m.sha256, m.size, (source, count, read, total) ->
+                        a.runOnUiThread(() -> {
+                            if (!dialog.isShowing()) return;
+                            label.setText("正在下载 " + m.name + "（下载源 " + source + "/" + count + "）");
+                            bar.setIndeterminate(total <= 0);
+                            bar.setMax(100);
+                            bar.setProgress(total > 0 ? (int) Math.min(100, read * 100 / total) : 0);
+                        }));
                 a.runOnUiThread(() -> {
                     downloading = false;
                     if (dialog.isShowing()) dialog.dismiss();
-                    install(a, target);
+                    if (!transfer.isCancelled()) install(a, target);
                 });
             } catch (final Exception e) {
-                part.delete();
                 a.runOnUiThread(() -> {
                     downloading = false;
-                    connection = null;
                     if (dialog.isShowing()) dialog.dismiss();
-                    if (!cancelled && !a.isFinishing() && !a.isDestroyed()) {
+                    if (!transfer.isCancelled() && !a.isFinishing() && !a.isDestroyed()) {
                         Toast.makeText(a, e.getMessage() == null ? "下载失败" : e.getMessage(), Toast.LENGTH_LONG).show();
                     }
                 });
@@ -324,25 +273,6 @@ public final class UpdateChecker {
         } catch (Exception e) {
             Toast.makeText(a, "无法打开系统安装器：" + e.getMessage(), Toast.LENGTH_LONG).show();
         }
-    }
-
-    private static long contentLength(String value) {
-        try { return Long.parseLong(value); } catch (Exception e) { return 0; }
-    }
-
-    private static String sha256(File file) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream in = new FileInputStream(file)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) digest.update(buf, 0, n);
-        }
-        final char[] digits = "0123456789abcdef".toCharArray();
-        StringBuilder hex = new StringBuilder(64);
-        for (byte b : digest.digest()) {
-            hex.append(digits[(b >> 4) & 0xf]).append(digits[b & 0xf]);
-        }
-        return hex.toString();
     }
 
     private static String size(long bytes) {
