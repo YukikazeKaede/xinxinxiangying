@@ -1,5 +1,7 @@
 import cn.xinxinxiangying.app.UpdateArtifact;
 import org.json.JSONObject;
+import org.json.JSONArray;
+import java.util.Arrays;
 
 public final class UpdateArtifactTest {
     private static int checks;
@@ -7,9 +9,17 @@ public final class UpdateArtifactTest {
     public static void main(String[] args)throws Exception{
         JSONObject legacy=new JSONObject().put("url","https://example.invalid/legacy.apk");
         check(UpdateArtifact.select(legacy,new String[]{"arm64-v8a"})==legacy,"legacy feed remains supported");
+        check(UpdateArtifact.sources(legacy).equals(Arrays.asList("https://example.invalid/legacy.apk")),"legacy URL remains the sole source");
+        legacy.put("mirrors",new JSONArray().put("https://example.invalid/legacy.apk").put(" https://example.invalid/mirror.apk ").put("http://example.invalid/unsafe").put(7).put("https://").put("https://user:secret@example.invalid/a"));
+        check(UpdateArtifact.sources(legacy).equals(Arrays.asList("https://example.invalid/legacy.apk","https://example.invalid/mirror.apk")),"deduplicates and ignores invalid or insecure mirrors");
+        legacy.put("mirrors","invalid");
+        check(UpdateArtifact.sources(legacy).size()==1,"malformed optional mirrors retain primary");
         JSONObject artifacts=new JSONObject();
         for(String abi:new String[]{"arm64-v8a","armeabi-v7a","x86","x86_64"})artifacts.put(abi,new JSONObject().put("url","https://example.invalid/"+abi+".apk"));
         JSONObject feed=new JSONObject().put("artifacts",artifacts);
+        feed.put("mirrors",new JSONArray().put("https://example.invalid/arm64-only.apk"));
+        artifacts.getJSONObject("x86").put("mirrors",new JSONArray().put("https://example.invalid/x86-mirror.apk"));
+        check(UpdateArtifact.sources(UpdateArtifact.select(feed,new String[]{"x86"})).equals(Arrays.asList("https://example.invalid/x86.apk","https://example.invalid/x86-mirror.apk")),"architecture mirrors never inherit the top-level arm64 mirror");
         for(String abi:new String[]{"arm64-v8a","armeabi-v7a","x86","x86_64"})
             check(UpdateArtifact.select(feed,new String[]{abi}).getString("url").endsWith("/"+abi+".apk"),"selects each device architecture");
         check(UpdateArtifact.select(feed,new String[]{"x86_64","x86"})==artifacts.getJSONObject("x86_64"),"uses device preference order");

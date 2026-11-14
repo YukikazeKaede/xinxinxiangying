@@ -4,13 +4,21 @@ param(
     [string]$Notes = '',
     [string]$NotesFile = '',
     [string]$OutFile = '',
-    [switch]$AllAbis
+    [switch]$AllAbis,
+    [string[]]$Mirrors = @()
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $Url.StartsWith('https://')) { throw 'Url must start with https://' }
+$Mirrors = @($Mirrors | ForEach-Object {
+    $mirror = $_.Trim()
+    $parsed = $null
+    if (-not [Uri]::TryCreate($mirror, [UriKind]::Absolute, [ref]$parsed) -or $parsed.Scheme -ne 'https' -or -not $parsed.Host -or $parsed.UserInfo) { throw 'Mirrors must be absolute HTTPS URLs without credentials.' }
+    if ($AllAbis -and -not $mirror.EndsWith('-arm64-v8a.apk')) { throw 'For -AllAbis, mirrors must end with -arm64-v8a.apk.' }
+    $mirror
+} | Select-Object -Unique)
 if ($NotesFile) {
     if (-not (Test-Path -LiteralPath $NotesFile)) { throw "Notes file not found: $NotesFile" }
     $Notes = [IO.File]::ReadAllText($NotesFile, [Text.Encoding]::UTF8).TrimEnd()
@@ -43,6 +51,7 @@ $manifest = [ordered]@{
     size = $size
     notes = $Notes
 }
+if ($Mirrors.Count) { $manifest.mirrors = @($Mirrors) }
 if ($AllAbis) {
     if (-not $Apk.EndsWith('-arm64-v8a.apk')) { throw 'For -AllAbis, -Apk must be the arm64-v8a APK.' }
     if (-not $Url.EndsWith('-arm64-v8a.apk')) { throw 'For -AllAbis, -Url must end with -arm64-v8a.apk.' }
@@ -63,10 +72,13 @@ if ($AllAbis) {
             sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
             size = (Get-Item -LiteralPath $file).Length
         }
+        if ($Mirrors.Count) {
+            $artifacts[$abi].mirrors = @($Mirrors | ForEach-Object { $_.Substring(0, $_.Length - '-arm64-v8a.apk'.Length) + '-' + $abi + '.apk' })
+        }
     }
     $manifest.artifacts = $artifacts
 }
-$json = $manifest | ConvertTo-Json -Depth 4
+$json = $manifest | ConvertTo-Json -Depth 6
 
 if (-not $OutFile) { $OutFile = Join-Path $root 'update.json' }
 $dir = Split-Path -Parent $OutFile
